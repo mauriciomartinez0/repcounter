@@ -1,0 +1,11 @@
+# Solo se versionan la app, la API y el firmware. Capturas de datos, scripts
+# de análisis, pruebas de IMU y modelos 3D quedan fuera.
+/*
+!/.gitignore
+!/README.md
+!/rep_counter_app/
+!/rep_counter_api/
+!/rep_counter_ble/
+
+# Archivos de bloqueo de LibreOffice.
+.~lock.*
