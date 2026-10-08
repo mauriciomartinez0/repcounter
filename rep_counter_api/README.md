@@ -20,6 +20,7 @@ O a mano, con la base en Docker y la API en tu máquina:
 docker run -d --name repcounter-db -p 55432:5432 \
   -e POSTGRES_USER=repcounter -e POSTGRES_PASSWORD=repcounter -e POSTGRES_DB=repcounter \
   postgres:17-alpine
+cp .env.example .env    # APP_ENV=dev para desarrollo
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m app.migrate
 .venv/bin/uvicorn app.main:app --reload
@@ -115,7 +116,8 @@ Qué hacer con cada respuesta:
   código de recuperación en el log). Falta elegir proveedor.
 - **Google:** poner los client IDs en `GOOGLE_CLIENT_IDS`; sin ellos,
   `/auth/google` responde 503.
-- **`JWT_SECRET`** propio y largo, fuera del repositorio.
+- **`JWT_SECRET`** propio y largo, fuera del repositorio. Sin `APP_ENV=dev`,
+  la API no arranca si falta o tiene menos de 32 caracteres.
 - **Límite de intentos** en `/auth/login` y `/auth/forgot-password` (en el
   proxy o con un middleware).
 - **HTTPS** delante (Caddy, Nginx o la plataforma donde se despliegue) y
