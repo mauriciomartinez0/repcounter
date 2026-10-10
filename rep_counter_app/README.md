@@ -169,7 +169,7 @@ La URL del servidor se define al compilar, en `config/`:
 | Archivo | Para qué |
 |---|---|
 | `config/dev.json` | API en tu computador (`http://192.168.0.101:8000`). Solo debug permite http. |
-| `config/prod.json` | API en Railway. **Pon tu dominio en `API_BASE_URL`** (con https). |
+| `config/prod.json` | API en Railway (`https://repcounter-production.up.railway.app`). |
 
 ```bash
 # Desarrollo: API local (ver ../rep_counter_api/README.md) y teléfono en la misma red
@@ -230,7 +230,6 @@ El sensor simulado se conecta, calibra y hace series de 8 a 12 repeticiones.
 
 ## Pendiente
 
-- **Dominio de producción** en `config/prod.json`.
 - **Application ID:** sigue siendo `com.example.rep_counter_app`. Play Store
   no acepta `com.example`; hay que elegir uno propio (por ejemplo
   `com.tudominio.repcounter`) antes de publicar, porque después no se puede

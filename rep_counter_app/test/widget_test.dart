@@ -7,6 +7,7 @@ import 'package:rep_counter_app/app_scope.dart';
 import 'package:rep_counter_app/data/models.dart';
 import 'package:rep_counter_app/data/repository.dart';
 import 'package:rep_counter_app/data/session_controllers.dart';
+import 'package:rep_counter_app/main.dart' show configurationProblem;
 import 'package:rep_counter_app/screens/workout/summary_screen.dart';
 import 'package:rep_counter_app/sensor/sensor_service.dart';
 import 'package:rep_counter_app/util/format.dart';
@@ -175,6 +176,19 @@ void main() {
     expect([for (final s in session.sets) s.reps], [12, 10, 0]);
     expect(session.volumeKg, 60.0 * 22);
     workout.dispose();
+  });
+
+  test('Release builds need an https API URL', () {
+    expect(configurationProblem('', release: true), contains('Falta'));
+    expect(configurationProblem('http://192.168.0.101:8000', release: true),
+        contains('https'));
+    expect(configurationProblem('http://192.168.0.101:8000', release: false),
+        isNull);
+    expect(
+      configurationProblem('https://repcounter-production.up.railway.app',
+          release: true),
+      isNull,
+    );
   });
 
   testWidgets('Starts on login when signed out', (tester) async {
