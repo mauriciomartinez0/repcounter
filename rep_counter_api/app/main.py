@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Rep Counter API",
-    version="1.0.0",
+    version="1.1.0",
     description=(
         "Cuentas, catálogo de ejercicios, rutinas e historial del contador de "
         "repeticiones. Pensada para uso sin conexión: los ids de rutinas y "
