@@ -118,8 +118,9 @@ Qué hacer con cada respuesta:
   `/auth/google` responde 503.
 - **`JWT_SECRET`** propio y largo, fuera del repositorio. Sin `APP_ENV=dev`,
   la API no arranca si falta o tiene menos de 32 caracteres.
-- **Límite de intentos** en `/auth/login` y `/auth/forgot-password` (en el
-  proxy o con un middleware).
+- **Límite de intentos:** ya hay uno por IP en las rutas de cuenta
+  (`app/ratelimit.py`), en memoria. Si algún día corren varias instancias de la
+  API, moverlo a Redis.
 - **HTTPS** delante (Caddy, Nginx o la plataforma donde se despliegue) y
   respaldos de PostgreSQL.
 - **Errores de red con Google:** si no se pueden descargar los certificados de
@@ -129,21 +130,13 @@ Qué hacer con cada respuesta:
   en el mismo instante, la paginación no avanzaría. Con lotes de 50 no pasa,
   pero conviene pasar a un cursor (hora + id) como en `GET /sessions`.
 
-## Pendiente en la app (conectarla a esta API)
+## Pendiente en la app
 
-- Generar UUID v4 para rutinas y sesiones (hoy usa ids como `r-push` y
-  `s-<microsegundos>`), y migrar los datos locales existentes.
-- Implementar un `GymRepository` que hable con la API, con la cola local de
-  envíos pendientes y el orden de sincronización descrito arriba.
-- Implementar `AuthController` contra `/auth/*` y guardar los tokens con
-  `flutter_secure_storage`; renovar el access token ante un 401.
-- Catálogo: incluir una copia en la app y actualizarla con `If-None-Match`.
-- Encolar la sesión para subirla cuando el usuario toca "Listo" en el
-  resumen, no al terminar la última serie: el resumen permite corregir las
-  repeticiones y en el servidor las sesiones no se editan.
+La app ya está conectada (registro, inicio de sesión, catálogo, rutinas,
+sesiones y favoritos, con cola sin conexión). Falta:
+
 - Pantallas de recuperación de contraseña (pedir el código y poner la nueva).
 - Acceso con Google en el teléfono (`google_sign_in`) enviando el ID token a
   `/auth/google`.
 - Subir videos de tutorial a un almacenamiento (S3 o similar) y llenar
   `video_url`; reproducirlos con `video_player`.
-

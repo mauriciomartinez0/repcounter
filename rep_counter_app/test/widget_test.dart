@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:rep_counter_app/api/api_client.dart';
 import 'package:rep_counter_app/app.dart';
 import 'package:rep_counter_app/app_scope.dart';
 import 'package:rep_counter_app/data/models.dart';
@@ -15,7 +16,9 @@ Future<AppServices> _services() async {
   SharedPreferences.setMockInitialValues({});
   final services = AppServices(
     repository: LocalGymRepository(clock: () => DateTime(2026, 10, 7)),
-    auth: AuthController(),
+    auth: AuthController(
+      api: ApiClient(baseUrl: 'http://localhost', tokens: MemoryTokenStore()),
+    ),
     settings: SettingsController(),
     sensor: SimulatedSensorService(),
   );

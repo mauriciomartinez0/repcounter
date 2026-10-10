@@ -1,17 +1,49 @@
 // Data access. Screens read from an in-memory cache synchronously and write
-// through async methods. [LocalGymRepository] keeps everything on the phone;
-// an API-backed repository only has to implement the same abstract methods.
+// through async methods.
+//
+// - RemoteGymRepository (remote_repository.dart): the real one. Talks to the
+//   API, keeps an offline copy per user and a queue of pending changes.
+// - LocalGymRepository: everything on the phone with sample data. Used by
+//   tests and screenshots, never by the release app.
 
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 import 'models.dart';
 import 'seed.dart';
 
+enum SyncStatus { idle, syncing, offline, error }
+
 abstract class GymRepository extends ChangeNotifier {
   Future<void> load();
+
+  // Synchronization with the server. The local repository has nothing to
+  // sync, so these default to "always in sync".
+
+  SyncStatus get syncStatus => SyncStatus.idle;
+
+  /// Changes made on this phone that the server does not have yet.
+  int get pendingChanges => 0;
+  DateTime? get lastSyncedAt => null;
+
+  /// Something the server refused for good (shown in Ajustes).
+  String? get syncIssue => null;
+
+  Future<void> sync() async {}
+
+  /// Loads the data of [userId] (null when signed out).
+  Future<void> switchUser(String? userId) async {}
+
+  /// Deletes this phone's copy of the current user's data, pending changes
+  /// included. Used when signing out.
+  Future<void> discardUserData() async {}
+
+  /// A finished workout can still be corrected on the summary; it is
+  /// uploaded once the user taps "Listo".
+  Future<void> commitSession(String sessionId) async {}
 
   List<Exercise> get exercises;
   List<Routine> get routines;
@@ -191,9 +223,10 @@ class LocalGymRepository extends GymRepository {
 
   @override
   Future<Routine> saveRoutine(Routine routine) async {
-    final saved = routine.id.isEmpty
-        ? routine.copyWith(id: 'r-${_clock().microsecondsSinceEpoch}')
-        : routine;
+    final saved = routine.copyWith(
+      id: routine.id.isEmpty ? const Uuid().v4() : routine.id,
+      editedAt: _clock(),
+    );
     final index = _routines.indexWhere((r) => r.id == saved.id);
     _routines = [..._routines];
     if (index < 0) {

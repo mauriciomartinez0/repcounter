@@ -1,8 +1,15 @@
 // Domain models. They serialize to JSON with the same shape the backend API
-// is expected to use, so swapping the local repository for a remote one only
-// changes where the JSON goes.
+// uses (camelCase, ISO 8601 dates with time zone).
 
 import '../theme/app_icons.dart';
+
+/// Dates go to the API in UTC with an explicit zone; the API rejects dates
+/// without one.
+String _utc(DateTime d) => d.toUtc().toIso8601String();
+
+/// Dates come back in UTC; screens show local time (the day of a late-night
+/// session must not jump to the next one).
+DateTime _local(Object? raw) => DateTime.parse(raw as String).toLocal();
 
 enum MuscleGroup {
   chest('Pecho'),
@@ -54,6 +61,7 @@ class Exercise {
     this.tutorialSteps = const [],
     this.tutorialSeconds = 0,
     this.videoUrl,
+    this.active = true,
   });
 
   final String id;
@@ -76,6 +84,10 @@ class Exercise {
   final int tutorialSeconds;
   final String? videoUrl;
 
+  /// Retired exercises stay in the catalog so history keeps their name, but
+  /// are not offered for new workouts.
+  final bool active;
+
   bool get hasTutorial => tutorialSteps.isNotEmpty || videoUrl != null;
 
   Map<String, dynamic> toJson() => {
@@ -90,6 +102,7 @@ class Exercise {
         'tutorialSteps': tutorialSteps,
         'tutorialSeconds': tutorialSeconds,
         'videoUrl': videoUrl,
+        'active': active,
       };
 
   factory Exercise.fromJson(Map<String, dynamic> j) => Exercise(
@@ -105,6 +118,7 @@ class Exercise {
             (j['tutorialSteps'] as List? ?? const []).cast<String>().toList(),
         tutorialSeconds: j['tutorialSeconds'] as int? ?? 0,
         videoUrl: j['videoUrl'] as String?,
+        active: j['active'] as bool? ?? true,
       );
 }
 
@@ -158,11 +172,20 @@ class RoutineItem {
 }
 
 class Routine {
-  const Routine({required this.id, required this.name, required this.items});
+  const Routine({
+    required this.id,
+    required this.name,
+    required this.items,
+    this.editedAt,
+  });
 
   final String id;
   final String name;
   final List<RoutineItem> items;
+
+  /// When it was last edited on a phone. If two phones edit the same routine
+  /// offline, the later edit wins.
+  final DateTime? editedAt;
 
   /// Rough length: about a minute per set (work plus setup), the planned
   /// rest, and five minutes to warm up and move between stations.
@@ -175,17 +198,24 @@ class Routine {
     return ((minutes / 5).round() * 5).clamp(5, 600);
   }
 
-  Routine copyWith({String? id, String? name, List<RoutineItem>? items}) =>
+  Routine copyWith({
+    String? id,
+    String? name,
+    List<RoutineItem>? items,
+    DateTime? editedAt,
+  }) =>
       Routine(
         id: id ?? this.id,
         name: name ?? this.name,
         items: items ?? this.items,
+        editedAt: editedAt ?? this.editedAt,
       );
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
         'items': [for (final i in items) i.toJson()],
+        if (editedAt != null) 'editedAt': _utc(editedAt!),
       };
 
   factory Routine.fromJson(Map<String, dynamic> j) => Routine(
@@ -195,6 +225,7 @@ class Routine {
           for (final i in j['items'] as List)
             RoutineItem.fromJson(i as Map<String, dynamic>),
         ],
+        editedAt: j['editedAt'] == null ? null : _local(j['editedAt']),
       );
 }
 
@@ -245,7 +276,7 @@ class SetRecord {
         'weightKg': weightKg,
         'meanVelocity': meanVelocity,
         'rangeDegrees': rangeDegrees,
-        'completedAt': completedAt.toIso8601String(),
+        'completedAt': _utc(completedAt),
       };
 
   factory SetRecord.fromJson(Map<String, dynamic> j) => SetRecord(
@@ -256,7 +287,7 @@ class SetRecord {
         weightKg: (j['weightKg'] as num?)?.toDouble(),
         meanVelocity: (j['meanVelocity'] as num?)?.toDouble(),
         rangeDegrees: (j['rangeDegrees'] as num?)?.toDouble(),
-        completedAt: DateTime.parse(j['completedAt'] as String),
+        completedAt: _local(j['completedAt']),
       );
 }
 
@@ -310,8 +341,8 @@ class WorkoutSession {
         'id': id,
         'routineId': routineId,
         'title': title,
-        'startedAt': startedAt.toIso8601String(),
-        'endedAt': endedAt.toIso8601String(),
+        'startedAt': _utc(startedAt),
+        'endedAt': _utc(endedAt),
         'plannedExercises': plannedExercises,
         'sets': [for (final s in sets) s.toJson()],
       };
@@ -320,8 +351,8 @@ class WorkoutSession {
         id: j['id'] as String,
         routineId: j['routineId'] as String?,
         title: j['title'] as String,
-        startedAt: DateTime.parse(j['startedAt'] as String),
-        endedAt: DateTime.parse(j['endedAt'] as String),
+        startedAt: _local(j['startedAt']),
+        endedAt: _local(j['endedAt']),
         plannedExercises: j['plannedExercises'] as int? ?? 0,
         sets: [
           for (final s in j['sets'] as List)
@@ -331,13 +362,17 @@ class WorkoutSession {
 }
 
 class UserProfile {
-  const UserProfile({required this.name, required this.email});
+  const UserProfile({required this.id, required this.name, required this.email});
 
+  final String id;
   final String name;
   final String email;
 
-  Map<String, dynamic> toJson() => {'name': name, 'email': email};
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'email': email};
 
-  factory UserProfile.fromJson(Map<String, dynamic> j) =>
-      UserProfile(name: j['name'] as String, email: j['email'] as String);
+  factory UserProfile.fromJson(Map<String, dynamic> j) => UserProfile(
+        id: j['id'] as String,
+        name: j['name'] as String,
+        email: j['email'] as String,
+      );
 }

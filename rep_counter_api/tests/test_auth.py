@@ -110,3 +110,23 @@ def test_change_password_and_delete_account(client):
     assert client.request("DELETE", "/me", headers=h, json={"password": "12345678"}).status_code == 403
     assert client.request("DELETE", "/me", headers=h, json={"password": "nueva-clave"}).status_code == 204
     assert client.get("/me", headers=h).status_code == 401
+
+
+def test_login_attempts_are_limited_per_ip(client, monkeypatch):
+    from app import ratelimit
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "rate_limit_enabled", True)
+    ratelimit.reset()
+    register(client)
+    codes = [
+        client.post("/auth/login", json={"email": "camila@correo.com", "password": "mala-clave"}).status_code
+        for _ in range(11)
+    ]
+    assert codes[:10] == [401] * 10
+    assert codes[10] == 429
+    r = client.post("/auth/login", json={"email": "camila@correo.com", "password": "12345678"})
+    assert r.status_code == 429
+    assert r.json()["error"]["code"] == "rate_limited"
+    assert int(r.headers["retry-after"]) > 0
+    ratelimit.reset()

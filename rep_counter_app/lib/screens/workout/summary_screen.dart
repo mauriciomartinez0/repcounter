@@ -64,6 +64,8 @@ class _SummaryScreenState extends State<SummaryScreen> {
 
     void close() {
       if (justFinished) {
+        // Corrections are over: now it can go to the server.
+        repo.commitSession(session.id);
         Navigator.of(context).popUntil((route) => route.isFirst);
       } else {
         Navigator.of(context).pop();

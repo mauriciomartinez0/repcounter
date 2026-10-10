@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- La app habla con la API. Flutter solo lo declara en debug: sin esta
+         línea la versión de producción no tiene internet. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
@@ -11,7 +14,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="30" />
     <application
-        android:label="rep_counter_app"
+        android:label="Rep Counter"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

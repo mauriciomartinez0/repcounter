@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app_scope.dart';
+import '../../data/repository.dart';
 import '../../theme/app_icons.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/common.dart';
@@ -28,6 +29,18 @@ class RoutinesTab extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: kGutter),
                 children: [
                   Container(height: 1, color: c.line),
+                  if (routines.isEmpty && repo.lastSyncedAt == null &&
+                      repo.syncStatus != SyncStatus.idle)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      child: Text(
+                        repo.syncStatus == SyncStatus.syncing
+                            ? 'Cargando tus rutinas…'
+                            : 'No se pudieron cargar tus rutinas. Revisa tu '
+                                'internet; se reintenta solo.',
+                        style: AppText.text(16, color: c.ink2),
+                      ),
+                    ),
                   for (final routine in routines)
                     Pressable(
                       onTap: () => Navigator.of(context).push(

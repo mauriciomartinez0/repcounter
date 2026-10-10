@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 
 import '../data/models.dart';
 import '../data/repository.dart';
@@ -65,6 +66,10 @@ class WorkoutController extends ChangeNotifier {
   final DateTime Function() _clock;
 
   late final DateTime _startedAt;
+
+  /// Generated here, not by the server, so a workout done without signal
+  /// already has its final id and uploading it twice stores it once.
+  final String _sessionId = const Uuid().v4();
   late Exercise _exercise;
   final List<SetRecord> _records = [];
 
@@ -368,7 +373,7 @@ class WorkoutController extends ChangeNotifier {
     sensor.removeListener(_onSensor);
     if (_records.isEmpty) return null;
     final session = WorkoutSession(
-      id: 's-${_startedAt.microsecondsSinceEpoch}',
+      id: _sessionId,
       routineId: routine?.id,
       title: routine?.name ?? 'Entrenamiento libre',
       startedAt: _startedAt,

@@ -4,4 +4,7 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Solo en debug: permite probar contra la API corriendo en tu
+         computador por http (config/dev.json). Producción exige https. -->
+    <application android:usesCleartextTraffic="true" />
 </manifest>

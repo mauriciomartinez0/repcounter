@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import 'api/api_client.dart';
 import 'data/repository.dart';
 import 'data/session_controllers.dart';
 import 'sensor/sensor_service.dart';
@@ -11,15 +12,23 @@ class AppServices {
     required this.auth,
     required this.settings,
     required this.sensor,
+    this.api,
   });
 
   final GymRepository repository;
   final AuthController auth;
   final SettingsController settings;
   final SensorService sensor;
+  final ApiClient? api;
 
-  Future<void> load() =>
-      Future.wait([repository.load(), auth.load(), settings.load()]);
+  Future<void> load() async {
+    await Future.wait([repository.load(), auth.load(), settings.load()]);
+    // The repository follows the signed-in user: their data loads on sign
+    // in, and on sign out or an expired session nothing of theirs stays on
+    // screen.
+    await repository.switchUser(auth.user?.id);
+    auth.addListener(() => repository.switchUser(auth.user?.id));
+  }
 }
 
 class AppScope extends InheritedWidget {

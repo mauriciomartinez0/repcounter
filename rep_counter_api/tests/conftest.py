@@ -16,6 +16,9 @@ TEST_URL = ADMIN_URL.rsplit("/", 1)[0] + "/" + TEST_DB
 
 os.environ["DATABASE_URL"] = TEST_URL
 os.environ["APP_ENV"] = "dev"
+# Las pruebas registran muchas cuentas desde la misma IP; el límite se prueba
+# aparte en test_auth.py.
+os.environ["RATE_LIMIT_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient  # noqa: E402
 

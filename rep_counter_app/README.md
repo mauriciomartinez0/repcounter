@@ -140,31 +140,103 @@ conexión del sensor, rutinas, catálogo de ejercicios, entrenamiento
 ```
 lib/
   main.dart, app.dart, app_scope.dart   arranque y servicios compartidos
+  config.dart   URL de la API y opciones de compilación
+  api/          cliente HTTP: tokens, renovación, errores
   theme/        colores, tipografía (Barlow) e íconos de la guía de estilos
-  data/         modelos, repositorio local y datos de ejemplo
+  data/         modelos, repositorio remoto (API + copia local) y local (pruebas)
   sensor/       BLE con la placa + sensor simulado
   workout/      lógica del entrenamiento en curso
   screens/      una carpeta por sección
   widgets/      componentes compartidos y gráficas
 ```
 
-Hoy todo se guarda en el teléfono (`LocalGymRepository`). Cuando exista el
-servidor, basta con otra implementación de `GymRepository` y de
-`AuthController`; las pantallas no cambian.
+## Servidor
+
+La cuenta, las rutinas, el historial y los favoritos viven en la API
+(`../rep_counter_api`). La app guarda una copia en el teléfono y una cola de
+cambios pendientes, así que se puede entrenar sin internet: todo se sube solo
+cuando vuelve la señal, al abrir la app o desde Ajustes → Sincronización.
+
+- Los tokens van en el almacenamiento seguro del teléfono (Keystore), nunca
+  en SharedPreferences.
+- Un entrenamiento se sube al tocar "Listo" en el resumen, para que las
+  correcciones de repeticiones vayan incluidas.
+- Al cerrar sesión se borra la copia local de esa cuenta; si hay cambios sin
+  subir, la app avisa antes.
+
+La URL del servidor se define al compilar, en `config/`:
+
+| Archivo | Para qué |
+|---|---|
+| `config/dev.json` | API en tu computador (`http://192.168.0.101:8000`). Solo debug permite http. |
+| `config/prod.json` | API en Railway. **Pon tu dominio en `API_BASE_URL`** (con https). |
+
+```bash
+# Desarrollo: API local (ver ../rep_counter_api/README.md) y teléfono en la misma red
+flutter run --dart-define-from-file=config/dev.json
+
+# Producción
+flutter build appbundle --dart-define-from-file=config/prod.json
+```
+
+Si se compila sin URL, o en release con http, la app lo dice en pantalla en
+vez de fallar con errores de red.
+
+## Firma para Play Store
+
+Sin llave propia, la versión release se firma con la llave de debug: sirve
+para probar, no para publicar. Para publicar:
+
+```bash
+keytool -genkey -v -keystore ~/repcounter-upload.jks -keyalg RSA \
+  -keysize 2048 -validity 10000 -alias upload
+```
+
+y crea `android/key.properties` (ya está en `.gitignore`):
+
+```
+storeFile=/home/mauro/repcounter-upload.jks
+storePassword=...
+keyAlias=upload
+keyPassword=...
+```
+
+Guarda la llave y las contraseñas fuera del repositorio y con respaldo: sin
+ellas no se puede actualizar la app publicada.
+
+## Pruebas
+
+```bash
+flutter test                                  # unitarias
+API_TEST_URL=http://localhost:8000 \
+  flutter test test/api_integration_test.dart  # contra la API real
+```
+
+Las de integración registran varias cuentas seguidas, así que la API local
+debe correr sin el límite de intentos (si no, responde 429 desde la décima):
+
+```bash
+cd ../rep_counter_api
+APP_ENV=dev RATE_LIMIT_ENABLED=false .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
 
 ## Probar sin la placa
 
 ```bash
-flutter run --dart-define=SENSOR_SIM=true
+flutter run --dart-define-from-file=config/dev.json --dart-define=SENSOR_SIM=true
 ```
 
 El sensor simulado se conecta, calibra y hace series de 8 a 12 repeticiones.
 
 ## Pendiente
 
-- **Conectar con el servidor** (`../rep_counter_api`): ver la sección "Pendiente
-  en la app" de su README (ids UUID, repositorio remoto con cola de envíos,
-  tokens, catálogo, recuperación de contraseña, Google).
+- **Dominio de producción** en `config/prod.json`.
+- **Application ID:** sigue siendo `com.example.rep_counter_app`. Play Store
+  no acepta `com.example`; hay que elegir uno propio (por ejemplo
+  `com.tudominio.repcounter`) antes de publicar, porque después no se puede
+  cambiar.
+- **Recuperar contraseña y acceso con Google:** la API ya los tiene, faltan
+  las pantallas, el proveedor de correo y los client IDs de Google.
 - **Velocidad media:** la placa no la envía todavía. La app ya lee 2 bytes
   extra opcionales en la notificación (velocidad de la última repetición en
   mm/s, entero sin signo, little-endian); falta agregarlos al firmware.

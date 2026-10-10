@@ -103,6 +103,16 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _busy = false;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && context.app.auth.sessionExpired) {
+        showMessage(context, 'Tu sesión terminó. Vuelve a iniciar sesión.');
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _email.dispose();
     _password.dispose();
@@ -164,8 +174,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     underline: true,
                     onPressed: () => showMessage(
                       context,
-                      'Recuperar la contraseña necesita el servidor; '
-                      'todavía no está disponible.',
+                      'Recuperar la contraseña todavía no está disponible: '
+                      'falta configurar el envío de correos.',
                     ),
                   ),
                 ),

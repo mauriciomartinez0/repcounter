@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 from fastapi.concurrency import run_in_threadpool
 from psycopg import AsyncConnection, errors
 
@@ -9,6 +9,7 @@ from app import mailer
 from app.config import get_settings
 from app.deps import Conn, CurrentUser
 from app.errors import ApiError
+from app.ratelimit import limit
 from app.schemas import (
     AuthResponse,
     ForgotPasswordIn,
@@ -65,7 +66,11 @@ async def issue_tokens(conn: AsyncConnection, user: dict, replaces: UUID | None 
     )
 
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(limit("register", 10, 3600))],
+)
 async def register(body: RegisterIn, conn: Conn) -> AuthResponse:
     try:
         cur = await conn.execute(
@@ -77,7 +82,7 @@ async def register(body: RegisterIn, conn: Conn) -> AuthResponse:
     return await issue_tokens(conn, await cur.fetchone())
 
 
-@router.post("/login")
+@router.post("/login", dependencies=[Depends(limit("login", 10, 60))])
 async def login(body: LoginIn, conn: Conn) -> AuthResponse:
     cur = await conn.execute("SELECT * FROM users WHERE email = %s", (body.email,))
     user = await cur.fetchone()
@@ -102,7 +107,7 @@ def _verify_google_token(token: str, audiences: list[str]) -> dict:
     return claims
 
 
-@router.post("/google")
+@router.post("/google", dependencies=[Depends(limit("login", 10, 60))])
 async def google(body: GoogleIn, conn: Conn) -> AuthResponse:
     """Recibe el ID token que entrega Google Sign-In en el teléfono."""
     audiences = get_settings().google_audiences
@@ -135,7 +140,7 @@ async def google(body: GoogleIn, conn: Conn) -> AuthResponse:
     return await issue_tokens(conn, user)
 
 
-@router.post("/refresh")
+@router.post("/refresh", dependencies=[Depends(limit("refresh", 60, 60))])
 async def refresh(body: RefreshIn, conn: Conn) -> AuthResponse:
     """Cambia un refresh token por uno nuevo más un access token. Cada
     refresh token sirve una sola vez."""
@@ -177,7 +182,11 @@ async def logout_all(user: CurrentUser, conn: Conn) -> None:
     )
 
 
-@router.post("/forgot-password", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/forgot-password",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(limit("forgot", 5, 900))],
+)
 async def forgot_password(body: ForgotPasswordIn, conn: Conn) -> dict:
     """Siempre responde lo mismo, exista o no el correo."""
     cur = await conn.execute("SELECT * FROM users WHERE email = %s", (body.email,))
@@ -196,7 +205,11 @@ async def forgot_password(body: ForgotPasswordIn, conn: Conn) -> dict:
     return {"message": "Si el correo está registrado, te enviamos un código."}
 
 
-@router.post("/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(limit("reset", 10, 900))],
+)
 async def reset_password(body: ResetPasswordIn, conn: Conn) -> None:
     cur = await conn.execute(
         """

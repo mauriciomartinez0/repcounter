@@ -1,12 +1,38 @@
 import 'package:flutter/material.dart';
 
 import '../app_scope.dart';
+import '../data/repository.dart';
 import '../theme/app_theme.dart';
+import '../util/format.dart';
 import '../widgets/common.dart';
-import 'auth/login_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
+
+  /// Tries to upload pending changes first; if some cannot go up, asks
+  /// before deleting them along with this phone's copy of the account.
+  Future<void> _signOut(BuildContext context) async {
+    final app = context.app;
+    final repo = app.repository;
+    if (repo.pendingChanges > 0) await repo.sync();
+    if (!context.mounted) return;
+    final pending = repo.pendingChanges;
+    if (pending > 0) {
+      final ok = await confirm(
+        context,
+        title: '¿Cerrar sesión sin subir todo?',
+        message: 'Hay $pending ${plural(pending, 'cambio', 'cambios')} que '
+            'todavía no llegó al servidor, probablemente por falta de '
+            'internet. Si cierras sesión ahora, se pierden.',
+        confirmLabel: 'Cerrar sesión',
+      );
+      if (!ok) return;
+    }
+    await app.sensor.cancel();
+    await repo.discardUserData();
+    // The app returns to the login screen on its own when the session ends.
+    await app.auth.signOut();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -80,6 +106,10 @@ class SettingsScreen extends StatelessWidget {
                   const SizedBox(height: 4),
                   accountRow('Nombre', user?.name ?? '—'),
                   accountRow('Correo', user?.email ?? '—'),
+                  const SizedBox(height: 32),
+                  const AppLabel('Sincronización'),
+                  const SizedBox(height: 4),
+                  const _SyncStatusRow(),
                 ],
               ),
             ),
@@ -87,20 +117,72 @@ class SettingsScreen extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(kGutter, 16, kGutter, 32),
               child: SecondaryButton(
                 label: 'Cerrar sesión',
-                onPressed: () async {
-                  await app.auth.signOut();
-                  await app.sensor.cancel();
-                  if (!context.mounted) return;
-                  Navigator.of(context).pushAndRemoveUntil(
-                    MaterialPageRoute<void>(builder: (_) => const LoginScreen()),
-                    (_) => false,
-                  );
-                },
+                onPressed: () => _signOut(context),
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _SyncStatusRow extends StatelessWidget {
+  const _SyncStatusRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final repo = context.app.repository;
+    return ListenableBuilder(
+      listenable: repo,
+      builder: (context, _) {
+        final c = context.colors;
+        final pending = repo.pendingChanges;
+        final last = repo.lastSyncedAt;
+        final status = switch (repo.syncStatus) {
+          SyncStatus.syncing => 'Sincronizando…',
+          SyncStatus.offline => 'Sin conexión. Se reintenta solo.',
+          SyncStatus.error => 'El servidor no respondió bien. Se reintenta solo.',
+          SyncStatus.idle when pending > 0 =>
+            '$pending ${plural(pending, 'cambio pendiente', 'cambios pendientes')}',
+          SyncStatus.idle => last == null
+              ? 'Todavía no se sincroniza.'
+              : 'Al día · ${formatDay(last)}, '
+                  '${last.hour}:${last.minute.toString().padLeft(2, '0')}',
+        };
+        return Container(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: c.line)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(status,
+                        style: AppText.text(17,
+                            weight: FontWeight.w500, color: c.ink)),
+                  ),
+                  TextAction(
+                    label: 'Sincronizar',
+                    weight: FontWeight.w600,
+                    color: c.ink,
+                    onPressed: repo.syncStatus == SyncStatus.syncing
+                        ? null
+                        : repo.sync,
+                  ),
+                ],
+              ),
+              if (repo.syncIssue != null) ...[
+                const SizedBox(height: 4),
+                Text(repo.syncIssue!, style: AppText.text(14, color: c.ink2)),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }

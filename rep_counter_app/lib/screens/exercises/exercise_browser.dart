@@ -142,7 +142,8 @@ class _ExerciseBrowserState extends State<ExerciseBrowser> {
         final query = _fold(_query.trim());
         final filtered = [
           for (final e in repo.exercises)
-            if ((_equipment == null || e.equipment == _equipment) &&
+            if (e.active &&
+                (_equipment == null || e.equipment == _equipment) &&
                 (query.isEmpty || _fold(e.name).contains(query)))
               e,
         ];

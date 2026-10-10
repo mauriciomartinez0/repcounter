@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # y permite la clave de desarrollo. Cualquier otro valor es producción.
     app_env: str = "prod"
 
+    # Límite de intentos en las rutas de cuenta (ver app/ratelimit.py).
+    rate_limit_enabled: bool = True
+
     # Máximo de sesiones por subida en lote.
     max_batch_sessions: int = 50
 
