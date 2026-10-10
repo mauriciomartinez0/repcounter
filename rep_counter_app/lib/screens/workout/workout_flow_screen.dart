@@ -9,6 +9,7 @@ import '../../widgets/common.dart';
 import '../../workout/workout_controller.dart';
 import '../connection_screen.dart';
 import '../exercises/exercise_picker_screen.dart';
+import 'set_correction.dart';
 import 'summary_screen.dart';
 
 /// Makes sure the sensor is connected, then opens the workout.
@@ -445,7 +446,33 @@ class _RestView extends StatelessWidget {
     );
 
     final stats = StatPair(
-      left: StatCell(label: 'Repeticiones', value: repsValue),
+      left: StatCell(
+        label: 'Repeticiones',
+        value: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Flexible(child: repsValue),
+            const SizedBox(width: 10),
+            // Not in the mockups: the sensor can miss a rep, and a set that
+            // came up short should be recorded as it was.
+            if (last != null)
+              TextAction(
+                label: 'Corregir',
+                size: 14,
+                underline: true,
+                onPressed: () async {
+                  final reps = await askReps(
+                    context,
+                    title: '${workout.exercise.name} · serie ${last.setNumber}',
+                    initial: last.reps,
+                    target: last.targetReps,
+                  );
+                  if (reps != null) workout.setLastReps(reps);
+                },
+              ),
+          ],
+        ),
+      ),
       right: StatCell(
         label: 'Velocidad media',
         value: NumberWithUnit(

@@ -220,21 +220,20 @@ class WorkoutController extends ChangeNotifier {
   void finishSet() {
     if (_phase != WorkoutPhase.counting) return;
     _autoFinish?.cancel();
-    final reps = this.reps;
-    if (reps > 0) {
-      _records.add(SetRecord(
-        exerciseId: _exercise.id,
-        setNumber: _setNumber,
-        reps: reps,
-        targetReps: targetReps,
-        weightKg: weightKg,
-        meanVelocity: _velocities.isEmpty
-            ? null
-            : _velocities.reduce((a, b) => a + b) / _velocities.length,
-        rangeDegrees: _maxAngle > 0 ? _maxAngle : null,
-        completedAt: _clock(),
-      ));
-    }
+    // A set with fewer reps than planned, even zero, is still a set: the
+    // history should show where the effort dropped off.
+    _records.add(SetRecord(
+      exerciseId: _exercise.id,
+      setNumber: _setNumber,
+      reps: reps,
+      targetReps: targetReps,
+      weightKg: weightKg,
+      meanVelocity: _velocities.isEmpty
+          ? null
+          : _velocities.reduce((a, b) => a + b) / _velocities.length,
+      rangeDegrees: _maxAngle > 0 ? _maxAngle : null,
+      completedAt: _clock(),
+    ));
     _restItemIndex = _itemIndex;
 
     _next = _planNext();
@@ -348,6 +347,14 @@ class WorkoutController extends ChangeNotifier {
         weightKg: kg,
       );
     }
+    _notify();
+  }
+
+  /// "Corregir" on the rest screen: the sensor can miss or double-count a
+  /// rep, and the history should hold what was really done.
+  void setLastReps(int reps) {
+    if (_records.isEmpty || reps < 0) return;
+    _records.add(_records.removeLast().copyWith(reps: reps));
     _notify();
   }
 

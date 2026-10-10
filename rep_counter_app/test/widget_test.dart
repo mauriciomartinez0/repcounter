@@ -6,6 +6,7 @@ import 'package:rep_counter_app/app_scope.dart';
 import 'package:rep_counter_app/data/models.dart';
 import 'package:rep_counter_app/data/repository.dart';
 import 'package:rep_counter_app/data/session_controllers.dart';
+import 'package:rep_counter_app/screens/workout/summary_screen.dart';
 import 'package:rep_counter_app/sensor/sensor_service.dart';
 import 'package:rep_counter_app/util/format.dart';
 import 'package:rep_counter_app/workout/workout_controller.dart';
@@ -105,6 +106,71 @@ void main() {
     expect(session!.sets, hasLength(3));
     expect(session.volumeKg, 62.5 * 3 + 62.5 * 3);
     expect(repo.sessions.first.id, session.id);
+    workout.dispose();
+  });
+
+  group('SetsDescription', () {
+    final t = DateTime(2026, 10, 4);
+    SetRecord set(int n, int reps, double? kg, {int? target = 12}) => SetRecord(
+          exerciseId: 'x', setNumber: n, reps: reps, weightKg: kg,
+          targetReps: target, completedAt: t);
+
+    test('all sets as planned read like the plan', () {
+      final d = SetsDescription([for (var n = 1; n <= 4; n++) set(n, 12, 60)]);
+      expect(d.compact, isTrue);
+      expect(d.text, '4 × 12 · 60 kg');
+    });
+
+    test('a drop-off lists every set', () {
+      final d = SetsDescription([set(1, 12, 60), set(2, 10, 60), set(3, 9, 60), set(4, 8, 60)]);
+      expect(d.compact, isFalse);
+      expect(d.text, '60 kg: 12, 10, 9, 8');
+      expect(d.missedTarget, isTrue);
+      expect(d.target, 12);
+    });
+
+    test('weight changes start a new group', () {
+      final d = SetsDescription([set(1, 12, 60), set(2, 10, 60), set(3, 10, 55), set(4, 9, 55)]);
+      expect(d.text, '60 kg: 12, 10 · 55 kg: 10, 9');
+    });
+
+    test('same reps but all short of the target are not hidden', () {
+      final d = SetsDescription([set(1, 10, null), set(2, 10, null)]);
+      expect(d.compact, isFalse);
+      expect(d.text, 'corporal: 10, 10');
+    });
+  });
+
+  test('Short and zero-rep sets are kept and can be corrected', () async {
+    final services = await _services();
+    final sensor = _FakeSensor();
+    const routine = Routine(id: 'r-short', name: 'Prueba', items: [
+      RoutineItem(exerciseId: 'bench-press', sets: 3, reps: 12, weightKg: 60,
+          restSeconds: 30),
+    ]);
+    final workout = WorkoutController.routine(
+      repository: services.repository, sensor: sensor, routine: routine)
+      ..start();
+    sensor.emit(captured: false);
+    sensor.emit(captured: true);
+
+    sensor.emit(reps: 12);
+    workout.finishSet();
+    workout.startNextSet();
+    sensor.emit(reps: 9);
+    workout.finishSet();
+    expect(workout.lastRecord!.reps, 9);
+    // The sensor missed one; the user fixes it during the rest.
+    workout.setLastReps(10);
+    expect(workout.lastRecord!.reps, 10);
+
+    workout.startNextSet();
+    workout.finishSet(); // gave up without a rep
+    expect(workout.phase, WorkoutPhase.finished);
+
+    final session = (await workout.finish())!;
+    expect([for (final s in session.sets) s.reps], [12, 10, 0]);
+    expect(session.volumeKg, 60.0 * 22);
     workout.dispose();
   });
 

@@ -138,6 +138,9 @@ Qué hacer con cada respuesta:
 - Implementar `AuthController` contra `/auth/*` y guardar los tokens con
   `flutter_secure_storage`; renovar el access token ante un 401.
 - Catálogo: incluir una copia en la app y actualizarla con `If-None-Match`.
+- Encolar la sesión para subirla cuando el usuario toca "Listo" en el
+  resumen, no al terminar la última serie: el resumen permite corregir las
+  repeticiones y en el servidor las sesiones no se editan.
 - Pantallas de recuperación de contraseña (pedir el código y poner la nueva).
 - Acceso con Google en el teléfono (`google_sign_in`) enviando el ID token a
   `/auth/google`.

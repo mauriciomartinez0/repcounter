@@ -822,6 +822,64 @@ class WeightStepper extends StatelessWidget {
 
 }
 
+/// − value + for whole numbers, such as correcting the reps of a set.
+class CountStepper extends StatelessWidget {
+  const CountStepper({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.min = 0,
+    this.max = 999,
+    this.label = 'repeticiones',
+  });
+
+  final int value;
+  final ValueChanged<int> onChanged;
+  final int min;
+  final int max;
+
+  /// For screen readers: "Quitar una repetición".
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    Widget button(AppIconKind icon, String semantic, VoidCallback? onTap) =>
+        Pressable(
+          onTap: onTap,
+          semanticLabel: semantic,
+          child: Opacity(
+            opacity: onTap == null ? 0.4 : 1,
+            child: Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: c.surface,
+                borderRadius: BorderRadius.circular(kRadius),
+              ),
+              child: Center(child: AppIcon(icon, color: c.ink)),
+            ),
+          ),
+        );
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        button(AppIconKind.minus, 'Quitar una de $label',
+            value > min ? () => onChanged(value - 1) : null),
+        SizedBox(
+          width: 72,
+          child: Center(
+            child: Text('$value', style: AppText.number(40, color: c.ink)),
+          ),
+        ),
+        button(AppIconKind.plus, 'Sumar una de $label',
+            value < max ? () => onChanged(value + 1) : null),
+      ],
+    );
+  }
+}
+
 /// A labelled stat used in the rest screen, summary and progress.
 class StatCell extends StatelessWidget {
   const StatCell({

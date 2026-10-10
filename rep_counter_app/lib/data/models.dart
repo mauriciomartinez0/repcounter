@@ -226,10 +226,10 @@ class SetRecord {
 
   double get volumeKg => (weightKg ?? 0) * reps;
 
-  SetRecord copyWith({double? Function()? weightKg}) => SetRecord(
+  SetRecord copyWith({int? reps, double? Function()? weightKg}) => SetRecord(
         exerciseId: exerciseId,
         setNumber: setNumber,
-        reps: reps,
+        reps: reps ?? this.reps,
         targetReps: targetReps,
         weightKg: weightKg != null ? weightKg() : this.weightKg,
         meanVelocity: meanVelocity,
@@ -282,6 +282,16 @@ class WorkoutSession {
 
   /// How many exercises the routine had, for "5 de 5 ejercicios".
   final int plannedExercises;
+
+  WorkoutSession copyWith({List<SetRecord>? sets}) => WorkoutSession(
+        id: id,
+        routineId: routineId,
+        title: title,
+        startedAt: startedAt,
+        endedAt: endedAt,
+        plannedExercises: plannedExercises,
+        sets: sets ?? this.sets,
+      );
 
   Duration get duration => endedAt.difference(startedAt);
 

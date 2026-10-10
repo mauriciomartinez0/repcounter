@@ -210,7 +210,10 @@ List<WorkoutSession> seedSessions(DateTime now) {
         }
         for (var s = 1; s <= item.sets; s++) {
           clock = clock.add(Duration(seconds: 40 + item.restSeconds));
-          final missed = random.nextDouble() < 0.15 ? 1 : 0;
+          // Fatigue: later sets tend to fall short of the target, less so
+          // as the weeks go by.
+          final missed =
+              (random.nextDouble() * (s - 1) * (1.4 - progress)).floor();
           sets.add(SetRecord(
             exerciseId: item.exerciseId,
             setNumber: s,
