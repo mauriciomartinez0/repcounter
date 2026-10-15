@@ -31,6 +31,12 @@
  * grip. Checked against simulated sets with the measured noise and bias
  * (stack_sim.py); still needs confirming with real ones.
  *
+ * The board also records the set (vertical acceleration, 120 s at most) and,
+ * when the app closes the set (CMD_ANALYZE), analyses it as TRASPASO.md
+ * describes and answers on the analysis characteristic. The app offers the
+ * reps the live count missed, if any, for the user to confirm. All of it is
+ * in set_analysis.h.
+ *
  * Battery: the charge level goes out through the standard BLE Battery Service
  * (0x180F / 0x2A19), separate from the rep-counter service, so apps that do not
  * know about it keep working unchanged.
@@ -48,6 +54,10 @@
 
 #include <bluefruit.h>
 #include <Wire.h>
+
+// Weight-stack counting, recording and end-of-set analysis. Plain C++ shared
+// with the host test (test/set_analysis_test.cpp).
+#include "set_analysis.h"
 
 // ---------------------------------------------------------------------------
 // BLE identifiers
@@ -70,15 +80,35 @@ const uint8_t UUID_CONTROL[16] = {
   0x8d, 0x4e, 0x3c, 0x7f, 0x03, 0x00, 0xb2, 0xa1
 };
 
+// Analysis a1b20004-... (notify): result of the end-of-set analysis.
+const uint8_t UUID_ANALYSIS[16] = {
+  0x3b, 0x1a, 0x0f, 0x8e, 0x5d, 0x2c, 0x6b, 0x9a,
+  0x8d, 0x4e, 0x3c, 0x7f, 0x04, 0x00, 0xb2, 0xa1
+};
+
 BLEService        repService(UUID_SERVICE);
 BLECharacteristic stateCharacteristic(UUID_STATE);
 BLECharacteristic controlCharacteristic(UUID_CONTROL);
+BLECharacteristic analysisCharacteristic(UUID_ANALYSIS);
 BLEBas            batteryService;   // standard Battery Service, 0x180F
 
 // Control commands from the app
 static const uint8_t CMD_SET_EXERCISE = 0x01;   // payload: exercise id
 static const uint8_t CMD_RESET_COUNT  = 0x02;
 static const uint8_t CMD_REZERO       = 0x03;
+static const uint8_t CMD_ANALYZE      = 0x04;   // payload: token echoed back
+
+// Analysis packet, version 1, 8 bytes little endian:
+//   0     uint8   version (1)
+//   1     uint8   token from CMD_ANALYZE
+//   2     uint8   status (below)
+//   3..4  uint16  reps found by the analysis
+//   5..6  uint16  live count when the set closed
+//   7     uint8   reserved
+static const uint8_t ANALYSIS_VERSION = 1;
+static const uint8_t ANALYSIS_OK = 0;
+static const uint8_t ANALYSIS_TRUNCATED = 1;    // the set ran past the buffer
+static const uint8_t ANALYSIS_UNAVAILABLE = 2;  // not the stack profile, or nothing recorded
 
 // ---------------------------------------------------------------------------
 // IMU
@@ -160,34 +190,16 @@ uint32_t stillSinceMs = 0;
 uint32_t lastNotifyMs = 0;
 uint32_t ledOffAtMs = 0;
 
-// Weight stack (profile 2). Velocities in m/s, accelerations in g.
-static const float SAMPLE_DT_S       = 1.0f / 104.0f;   // accelerometer rate
-static const float GRAVITY_MS2       = 9.80665f;
-// No speed thresholds: a fixed one (0.12 m/s at first) missed slow, short
-// reps, whose peak never reached it. Only a deadband to ignore noise, and a
-// minimum travel per stroke.
-static const float STACK_DEADBAND_MPS = 0.02f;  // slower than this is not moving
-static const float STACK_MIN_ROM_M    = 0.04f;  // travel each way to be a stroke
-static const float STACK_LEAK_TAU_S  = 3.0f;    // residual error fades instead of piling up
-static const float STACK_DEADBAND_G  = 0.005f;  // sensor noise, not movement
-// Rest is judged on a smoothed signal with a fine threshold: a slow rep (3-4 s
-// per stroke) accelerates at only ~0.03 g, and a coarser test mistook it for
-// rest and zeroed the velocity mid-lift.
-static const float STACK_STILL_ALPHA = 0.1f;    // ~10 samples of smoothing
-static const float STACK_STILL_G     = 0.006f;  // below this the stack may be at rest
-static const uint32_t STACK_STILL_MS = 250;     // ...and after this long it is
-// A lift that never came down. Long, so a pause at the top is not mistaken
-// for it; it only clears the bump of the stack landing after the last rep.
-static const uint32_t STACK_IDLE_MS  = 3000;
+// Weight stack (profile 2): live counter and recording of the set.
+stack::StackCounter stackCounter;
+stack::SetRecorder setRecorder;          // 25 KB
+stack::Workspace analysisWorkspace;      // about 10 KB, used only at the end
 
-enum StackPhase : uint8_t { STACK_IDLE, STACK_LIFTING, STACK_LOWERING };
-
-float stackVelocity = 0.0f;
-float stackSmoothed = 0.0f;
-float stackRise = 0.0f;   // m travelled up in the current stroke
-float stackFall = 0.0f;   // m travelled down
-StackPhase stackPhase = STACK_IDLE;
-uint32_t stackStillSinceMs = 0;
+// Commands arrive on the BLE task; the loop applies them, so the counter and
+// the recording are only ever touched from one place.
+static const uint8_t COMMAND_QUEUE = 8;
+volatile uint8_t commandQueue[COMMAND_QUEUE][2];
+volatile uint8_t commandHead = 0, commandTail = 0;
 
 // Low-pass coefficient. At 104 Hz this puts the corner near 2 Hz, which keeps
 // gravity and rejects the sharp transients of the movement itself.
@@ -352,12 +364,7 @@ void resetSession(bool alsoDropReference) {
   repCount = 0;
   inUpPhase = false;
   lastRepMs = 0;
-  stackVelocity = 0.0f;
-  stackSmoothed = 0.0f;
-  stackRise = 0.0f;
-  stackFall = 0.0f;
-  stackPhase = STACK_IDLE;
-  stackStillSinceMs = 0;
+  stackCounter.reset();
   if (alsoDropReference) {
     referenceCaptured = false;
     stillSinceMs = 0;
@@ -387,8 +394,9 @@ void countRep(uint32_t nowMs, uint32_t refractoryMs) {
 }
 
 /*
- * Profile 2. Follows the stack's vertical velocity, sample by sample. The
- * published "angle" carries that velocity in cm/s so the app can show it.
+ * Profile 2. Follows the stack's vertical velocity, sample by sample, and
+ * records it for the end-of-set analysis. The published "angle" carries that
+ * velocity in cm/s so the app can show it.
  */
 void updateStack(float ax, float ay, float az, uint32_t nowMs) {
   float refNorm = sqrtf(referenceX * referenceX + referenceY * referenceY + referenceZ * referenceZ);
@@ -398,60 +406,16 @@ void updateStack(float ax, float ay, float az, uint32_t nowMs) {
   // up direction. Subtracting its length leaves only the movement, with the
   // bias along that axis already removed.
   float vertical = (ax * referenceX + ay * referenceY + az * referenceZ) / refNorm - refNorm;
-  stackSmoothed += STACK_STILL_ALPHA * (vertical - stackSmoothed);
-  if (fabsf(vertical) < STACK_DEADBAND_G) vertical = 0.0f;
 
-  stackVelocity += vertical * GRAVITY_MS2 * SAMPLE_DT_S;
-  stackVelocity -= stackVelocity * (SAMPLE_DT_S / STACK_LEAK_TAU_S);
-
-  // Zero-velocity update: a still stack is not moving, whatever the integral
-  // says. A constant-speed stretch also reads as still; that only shifts when
-  // the phases change, it does not add or drop a rep.
-  bool still = false;
-  if (fabsf(stackSmoothed) < STACK_STILL_G) {
-    if (stackStillSinceMs == 0) stackStillSinceMs = nowMs;
-    if (nowMs - stackStillSinceMs >= STACK_STILL_MS) {
-      stackVelocity = 0.0f;
-      still = true;
-    }
-  } else {
-    stackStillSinceMs = 0;
+  setRecorder.push(vertical);
+  if (stackCounter.update(vertical, nowMs)) {
+    repCount = stackCounter.reps;
+    digitalWrite(LED_BUILTIN, LOW);     // active low: LOW = on
+    ledOffAtMs = nowMs + 120;
   }
 
-  const ExerciseProfile &profile = EXERCISE_PROFILES[currentExercise];
-  const float v = stackVelocity;
-  switch (stackPhase) {
-    case STACK_IDLE:
-      // Travel up adds; any real move down starts over. The bump of the stack
-      // landing is a few millimetres and never reaches the minimum.
-      if (v > STACK_DEADBAND_MPS) stackRise += v * SAMPLE_DT_S;
-      else if (v < -STACK_DEADBAND_MPS) stackRise = 0.0f;
-      if (stackRise >= STACK_MIN_ROM_M) {
-        stackPhase = STACK_LIFTING;
-        stackFall = 0.0f;
-      }
-      break;
-    case STACK_LIFTING:
-      if (v < -STACK_DEADBAND_MPS) stackFall += -v * SAMPLE_DT_S;
-      else if (v > STACK_DEADBAND_MPS) stackFall = 0.0f;
-      if (stackFall >= STACK_MIN_ROM_M) {
-        stackPhase = STACK_LOWERING;
-      } else if (still && nowMs - stackStillSinceMs >= STACK_IDLE_MS) {
-        stackPhase = STACK_IDLE;   // a lift that was abandoned
-        stackRise = 0.0f;
-      }
-      break;
-    case STACK_LOWERING:
-      if (v > -STACK_DEADBAND_MPS) {   // the descent ended
-        stackPhase = STACK_IDLE;
-        stackRise = 0.0f;
-        countRep(nowMs, profile.refractoryMs);
-      }
-      break;
-  }
-
-  inUpPhase = (stackPhase == STACK_LIFTING);
-  currentAngleDeg = stackVelocity * 100.0f;   // cm/s
+  inUpPhase = (stackCounter.phase == stack::StackCounter::LIFTING);
+  currentAngleDeg = stackCounter.velocity * 100.0f;   // cm/s
 }
 
 void updateCounter(uint32_t nowMs) {
@@ -483,27 +447,81 @@ void onControlWrite(uint16_t connectionHandle, BLECharacteristic *characteristic
   (void)characteristic;
   if (length < 1) return;
 
-  switch (data[0]) {
-    case CMD_SET_EXERCISE:
-      if (length >= 2 && data[1] < EXERCISE_COUNT) {
-        currentExercise = data[1];
-        resetSession(true);   // thresholds and resting pose both change
-      }
-      break;
-    case CMD_RESET_COUNT:
-      resetSession(false);
-      break;
-    case CMD_REZERO:
-      resetSession(true);
-      break;
-    default:
-      break;
+  uint8_t next = (commandHead + 1) % COMMAND_QUEUE;
+  if (next == commandTail) return;   // full: the app resends what matters
+  commandQueue[commandHead][0] = data[0];
+  commandQueue[commandHead][1] = length >= 2 ? data[1] : 0;
+  commandHead = next;
+}
+
+/* End of set: stop recording, analyse, and answer with both counts. */
+void analyzeSet(uint8_t token) {
+  setRecorder.stop();
+  uint8_t status = ANALYSIS_OK;
+  uint16_t found = 0;
+  if (EXERCISE_PROFILES[currentExercise].kind != PROFILE_STACK || setRecorder.length < 2) {
+    status = ANALYSIS_UNAVAILABLE;
+  } else {
+    if (setRecorder.truncated) status = ANALYSIS_TRUNCATED;
+    // Milliseconds of work for a full buffer. It consumes the recording,
+    // which is fine: the set is closed.
+    found = stack::analyzeSet(setRecorder.samples, setRecorder.length, analysisWorkspace);
+    setRecorder.length = 0;
+  }
+
+  uint8_t payload[8];
+  payload[0] = ANALYSIS_VERSION;
+  payload[1] = token;
+  payload[2] = status;
+  payload[3] = (uint8_t)(found & 0xFF);
+  payload[4] = (uint8_t)(found >> 8);
+  payload[5] = (uint8_t)(repCount & 0xFF);
+  payload[6] = (uint8_t)(repCount >> 8);
+  payload[7] = 0;
+  analysisCharacteristic.write(payload, sizeof(payload));
+  analysisCharacteristic.notify(payload, sizeof(payload));
+}
+
+void applyCommands() {
+  while (commandTail != commandHead) {
+    uint8_t command = commandQueue[commandTail][0];
+    uint8_t argument = commandQueue[commandTail][1];
+    commandTail = (commandTail + 1) % COMMAND_QUEUE;
+
+    switch (command) {
+      case CMD_SET_EXERCISE:
+        if (argument < EXERCISE_COUNT) {
+          currentExercise = argument;
+          resetSession(true);   // thresholds and resting pose both change
+          setRecorder.stop();
+        }
+        break;
+      case CMD_RESET_COUNT:
+        resetSession(false);
+        // A new set starts: record it, so it can be analysed when it closes.
+        if (EXERCISE_PROFILES[currentExercise].kind == PROFILE_STACK) setRecorder.start();
+        break;
+      case CMD_REZERO:
+        resetSession(true);
+        setRecorder.stop();
+        break;
+      case CMD_ANALYZE:
+        analyzeSet(argument);
+        break;
+      default:
+        break;
+    }
   }
 }
 
 void onConnect(uint16_t connectionHandle) {
   (void)connectionHandle;
-  resetSession(true);
+  // Through the queue as well: a rezero, like the app would ask for.
+  uint8_t next = (commandHead + 1) % COMMAND_QUEUE;
+  if (next == commandTail) return;
+  commandQueue[commandHead][0] = CMD_REZERO;
+  commandQueue[commandHead][1] = 0;
+  commandHead = next;
 }
 
 void publishState(uint32_t nowMs) {
@@ -544,6 +562,11 @@ void startBle() {
   controlCharacteristic.setMaxLen(4);
   controlCharacteristic.setWriteCallback(onControlWrite);
   controlCharacteristic.begin();
+
+  analysisCharacteristic.setProperties(CHR_PROPS_NOTIFY | CHR_PROPS_READ);
+  analysisCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+  analysisCharacteristic.setFixedLen(8);
+  analysisCharacteristic.begin();
 
   batteryService.begin();
 
@@ -588,6 +611,7 @@ void loop() {
   }
 
   updateBattery(nowMs, false);
+  applyCommands();
 
   if (!imuReady) {
     // Slow double blink means the sensor never came up.
