@@ -25,8 +25,11 @@
  * velocity instead: acceleration along the gravity axis, minus the reading at
  * rest (which cancels the accelerometer bias on that axis), integrated with a
  * slow leak and reset to zero whenever the stack is still. A rep is up, then
- * down, then stopped. The thresholds were checked against simulated sets
- * (stack_sim.py) and still need confirming with real ones.
+ * down, then stopped, told apart by the SIGN of the velocity rather than its
+ * size, so a slow or half-range rep near failure still counts. The only size
+ * test is 4 cm of travel each way, which separates a rep from adjusting the
+ * grip. Checked against simulated sets with the measured noise and bias
+ * (stack_sim.py); still needs confirming with real ones.
  *
  * Battery: the charge level goes out through the standard BLE Battery Service
  * (0x180F / 0x2A19), separate from the rep-counter service, so apps that do not
@@ -160,9 +163,11 @@ uint32_t ledOffAtMs = 0;
 // Weight stack (profile 2). Velocities in m/s, accelerations in g.
 static const float SAMPLE_DT_S       = 1.0f / 104.0f;   // accelerometer rate
 static const float GRAVITY_MS2       = 9.80665f;
-static const float STACK_UP_MPS      = 0.12f;   // rising faster than this: lifting
-static const float STACK_DOWN_MPS    = 0.12f;   // falling faster than this: lowering
-static const float STACK_END_MPS     = 0.04f;   // slower than this: the descent ended
+// No speed thresholds: a fixed one (0.12 m/s at first) missed slow, short
+// reps, whose peak never reached it. Only a deadband to ignore noise, and a
+// minimum travel per stroke.
+static const float STACK_DEADBAND_MPS = 0.02f;  // slower than this is not moving
+static const float STACK_MIN_ROM_M    = 0.04f;  // travel each way to be a stroke
 static const float STACK_LEAK_TAU_S  = 3.0f;    // residual error fades instead of piling up
 static const float STACK_DEADBAND_G  = 0.005f;  // sensor noise, not movement
 // Rest is judged on a smoothed signal with a fine threshold: a slow rep (3-4 s
@@ -179,6 +184,8 @@ enum StackPhase : uint8_t { STACK_IDLE, STACK_LIFTING, STACK_LOWERING };
 
 float stackVelocity = 0.0f;
 float stackSmoothed = 0.0f;
+float stackRise = 0.0f;   // m travelled up in the current stroke
+float stackFall = 0.0f;   // m travelled down
 StackPhase stackPhase = STACK_IDLE;
 uint32_t stackStillSinceMs = 0;
 
@@ -347,6 +354,8 @@ void resetSession(bool alsoDropReference) {
   lastRepMs = 0;
   stackVelocity = 0.0f;
   stackSmoothed = 0.0f;
+  stackRise = 0.0f;
+  stackFall = 0.0f;
   stackPhase = STACK_IDLE;
   stackStillSinceMs = 0;
   if (alsoDropReference) {
@@ -410,21 +419,32 @@ void updateStack(float ax, float ay, float az, uint32_t nowMs) {
   }
 
   const ExerciseProfile &profile = EXERCISE_PROFILES[currentExercise];
+  const float v = stackVelocity;
   switch (stackPhase) {
     case STACK_IDLE:
-      if (stackVelocity > STACK_UP_MPS) stackPhase = STACK_LIFTING;
+      // Travel up adds; any real move down starts over. The bump of the stack
+      // landing is a few millimetres and never reaches the minimum.
+      if (v > STACK_DEADBAND_MPS) stackRise += v * SAMPLE_DT_S;
+      else if (v < -STACK_DEADBAND_MPS) stackRise = 0.0f;
+      if (stackRise >= STACK_MIN_ROM_M) {
+        stackPhase = STACK_LIFTING;
+        stackFall = 0.0f;
+      }
       break;
     case STACK_LIFTING:
-      if (stackVelocity < -STACK_DOWN_MPS) {
+      if (v < -STACK_DEADBAND_MPS) stackFall += -v * SAMPLE_DT_S;
+      else if (v > STACK_DEADBAND_MPS) stackFall = 0.0f;
+      if (stackFall >= STACK_MIN_ROM_M) {
         stackPhase = STACK_LOWERING;
       } else if (still && nowMs - stackStillSinceMs >= STACK_IDLE_MS) {
-        // The bump of the stack landing, or a lift that was abandoned.
-        stackPhase = STACK_IDLE;
+        stackPhase = STACK_IDLE;   // a lift that was abandoned
+        stackRise = 0.0f;
       }
       break;
     case STACK_LOWERING:
-      if (stackVelocity > -STACK_END_MPS) {
+      if (v > -STACK_DEADBAND_MPS) {   // the descent ended
         stackPhase = STACK_IDLE;
+        stackRise = 0.0f;
         countRep(nowMs, profile.refractoryMs);
       }
       break;
