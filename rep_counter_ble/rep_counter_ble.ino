@@ -19,6 +19,15 @@
  *
  * The gyroscope is powered down: it contributes nothing here and costs power.
  *
+ * Weight stack (profile 2): on a cable or selector machine the sensor sits on
+ * the top plate of the stack, which moves straight up and down without
+ * rotating, so the tilt angle never changes. That profile follows vertical
+ * velocity instead: acceleration along the gravity axis, minus the reading at
+ * rest (which cancels the accelerometer bias on that axis), integrated with a
+ * slow leak and reset to zero whenever the stack is still. A rep is up, then
+ * down, then stopped. The thresholds were checked against simulated sets
+ * (stack_sim.py) and still need confirming with real ones.
+ *
  * Battery: the charge level goes out through the standard BLE Battery Service
  * (0x180F / 0x2A19), separate from the rep-counter service, so apps that do not
  * know about it keep working unchanged.
@@ -100,10 +109,16 @@ extern const uint32_t g_ADigitalPinMap[];
 // Exercise profiles
 // ---------------------------------------------------------------------------
 
+enum ProfileKind : uint8_t {
+  PROFILE_TILT,     // sensor rotates with a limb, the body or a bar
+  PROFILE_STACK,    // sensor rides a weight stack straight up and down
+};
+
 struct ExerciseProfile {
   const char *name;
-  float enterAngleDeg;        // crossing up past this arms the rep
-  float exitAngleDeg;         // coming back below this completes it
+  ProfileKind kind;
+  float enterAngleDeg;        // tilt: crossing up past this arms the rep
+  float exitAngleDeg;         // tilt: coming back below this completes it
   uint32_t refractoryMs;      // ignore anything faster than this
 };
 
@@ -111,8 +126,9 @@ struct ExerciseProfile {
 // between enter and exit is the hysteresis that stops a wobble at the
 // threshold from counting several times.
 const ExerciseProfile EXERCISE_PROFILES[] = {
-  { "push-up",     25.0f, 12.0f, 500 },   // id 0: sensor on the upper arm
-  { "biceps curl", 45.0f, 20.0f, 450 },   // id 1: sensor on the backpack
+  { "push-up",      PROFILE_TILT,  25.0f, 12.0f, 500 },   // id 0: sensor on the upper arm
+  { "biceps curl",  PROFILE_TILT,  45.0f, 20.0f, 450 },   // id 1: sensor on the backpack
+  { "weight stack", PROFILE_STACK,  0.0f,  0.0f, 600 },   // id 2: sensor on the stack
 };
 const uint8_t EXERCISE_COUNT = sizeof(EXERCISE_PROFILES) / sizeof(EXERCISE_PROFILES[0]);
 
@@ -140,6 +156,31 @@ uint32_t stillSinceMs = 0;
 
 uint32_t lastNotifyMs = 0;
 uint32_t ledOffAtMs = 0;
+
+// Weight stack (profile 2). Velocities in m/s, accelerations in g.
+static const float SAMPLE_DT_S       = 1.0f / 104.0f;   // accelerometer rate
+static const float GRAVITY_MS2       = 9.80665f;
+static const float STACK_UP_MPS      = 0.12f;   // rising faster than this: lifting
+static const float STACK_DOWN_MPS    = 0.12f;   // falling faster than this: lowering
+static const float STACK_END_MPS     = 0.04f;   // slower than this: the descent ended
+static const float STACK_LEAK_TAU_S  = 3.0f;    // residual error fades instead of piling up
+static const float STACK_DEADBAND_G  = 0.005f;  // sensor noise, not movement
+// Rest is judged on a smoothed signal with a fine threshold: a slow rep (3-4 s
+// per stroke) accelerates at only ~0.03 g, and a coarser test mistook it for
+// rest and zeroed the velocity mid-lift.
+static const float STACK_STILL_ALPHA = 0.1f;    // ~10 samples of smoothing
+static const float STACK_STILL_G     = 0.006f;  // below this the stack may be at rest
+static const uint32_t STACK_STILL_MS = 250;     // ...and after this long it is
+// A lift that never came down. Long, so a pause at the top is not mistaken
+// for it; it only clears the bump of the stack landing after the last rep.
+static const uint32_t STACK_IDLE_MS  = 3000;
+
+enum StackPhase : uint8_t { STACK_IDLE, STACK_LIFTING, STACK_LOWERING };
+
+float stackVelocity = 0.0f;
+float stackSmoothed = 0.0f;
+StackPhase stackPhase = STACK_IDLE;
+uint32_t stackStillSinceMs = 0;
 
 // Low-pass coefficient. At 104 Hz this puts the corner near 2 Hz, which keeps
 // gravity and rejects the sharp transients of the movement itself.
@@ -304,6 +345,10 @@ void resetSession(bool alsoDropReference) {
   repCount = 0;
   inUpPhase = false;
   lastRepMs = 0;
+  stackVelocity = 0.0f;
+  stackSmoothed = 0.0f;
+  stackPhase = STACK_IDLE;
+  stackStillSinceMs = 0;
   if (alsoDropReference) {
     referenceCaptured = false;
     stillSinceMs = 0;
@@ -324,6 +369,71 @@ float angleFromReferenceDeg() {
   return acosf(dot) * 57.29578f;
 }
 
+void countRep(uint32_t nowMs, uint32_t refractoryMs) {
+  if (nowMs - lastRepMs < refractoryMs) return;
+  repCount++;
+  lastRepMs = nowMs;
+  digitalWrite(LED_BUILTIN, LOW);     // active low: LOW = on
+  ledOffAtMs = nowMs + 120;
+}
+
+/*
+ * Profile 2. Follows the stack's vertical velocity, sample by sample. The
+ * published "angle" carries that velocity in cm/s so the app can show it.
+ */
+void updateStack(float ax, float ay, float az, uint32_t nowMs) {
+  float refNorm = sqrtf(referenceX * referenceX + referenceY * referenceY + referenceZ * referenceZ);
+  if (refNorm < 0.5f) return;
+
+  // At rest the accelerometer reads +1 g pointing up, so the reference is the
+  // up direction. Subtracting its length leaves only the movement, with the
+  // bias along that axis already removed.
+  float vertical = (ax * referenceX + ay * referenceY + az * referenceZ) / refNorm - refNorm;
+  stackSmoothed += STACK_STILL_ALPHA * (vertical - stackSmoothed);
+  if (fabsf(vertical) < STACK_DEADBAND_G) vertical = 0.0f;
+
+  stackVelocity += vertical * GRAVITY_MS2 * SAMPLE_DT_S;
+  stackVelocity -= stackVelocity * (SAMPLE_DT_S / STACK_LEAK_TAU_S);
+
+  // Zero-velocity update: a still stack is not moving, whatever the integral
+  // says. A constant-speed stretch also reads as still; that only shifts when
+  // the phases change, it does not add or drop a rep.
+  bool still = false;
+  if (fabsf(stackSmoothed) < STACK_STILL_G) {
+    if (stackStillSinceMs == 0) stackStillSinceMs = nowMs;
+    if (nowMs - stackStillSinceMs >= STACK_STILL_MS) {
+      stackVelocity = 0.0f;
+      still = true;
+    }
+  } else {
+    stackStillSinceMs = 0;
+  }
+
+  const ExerciseProfile &profile = EXERCISE_PROFILES[currentExercise];
+  switch (stackPhase) {
+    case STACK_IDLE:
+      if (stackVelocity > STACK_UP_MPS) stackPhase = STACK_LIFTING;
+      break;
+    case STACK_LIFTING:
+      if (stackVelocity < -STACK_DOWN_MPS) {
+        stackPhase = STACK_LOWERING;
+      } else if (still && nowMs - stackStillSinceMs >= STACK_IDLE_MS) {
+        // The bump of the stack landing, or a lift that was abandoned.
+        stackPhase = STACK_IDLE;
+      }
+      break;
+    case STACK_LOWERING:
+      if (stackVelocity > -STACK_END_MPS) {
+        stackPhase = STACK_IDLE;
+        countRep(nowMs, profile.refractoryMs);
+      }
+      break;
+  }
+
+  inUpPhase = (stackPhase == STACK_LIFTING);
+  currentAngleDeg = stackVelocity * 100.0f;   // cm/s
+}
+
 void updateCounter(uint32_t nowMs) {
   const ExerciseProfile &profile = EXERCISE_PROFILES[currentExercise];
 
@@ -339,12 +449,7 @@ void updateCounter(uint32_t nowMs) {
     // A rep is only counted on the way back, and only if enough time has
     // passed. Both guards exist because a single shake would otherwise cross
     // both thresholds and register as a rep.
-    if (nowMs - lastRepMs >= profile.refractoryMs) {
-      repCount++;
-      lastRepMs = nowMs;
-      digitalWrite(LED_BUILTIN, LOW);     // active low: LOW = on
-      ledOffAtMs = nowMs + 120;
-    }
+    countRep(nowMs, profile.refractoryMs);
   }
 }
 
@@ -383,6 +488,8 @@ void onConnect(uint16_t connectionHandle) {
 
 void publishState(uint32_t nowMs) {
   // 6 bytes, little endian: count, angle in tenths of a degree, exercise, phase.
+  // Profile 2 sends the stack's vertical velocity in tenths of cm/s instead
+  // of the angle (positive = up).
   uint8_t payload[6];
   int16_t angleTenths = (int16_t)(currentAngleDeg * 10.0f);
 
@@ -498,6 +605,8 @@ void loop() {
         } else {
           stillSinceMs = 0;
         }
+      } else if (EXERCISE_PROFILES[currentExercise].kind == PROFILE_STACK) {
+        updateStack(ax, ay, az, nowMs);
       } else {
         currentAngleDeg = angleFromReferenceDeg();
         updateCounter(nowMs);
