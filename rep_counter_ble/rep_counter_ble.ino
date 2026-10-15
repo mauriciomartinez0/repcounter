@@ -19,6 +19,10 @@
  *
  * The gyroscope is powered down: it contributes nothing here and costs power.
  *
+ * Battery: the charge level goes out through the standard BLE Battery Service
+ * (0x180F / 0x2A19), separate from the rep-counter service, so apps that do not
+ * know about it keep working unchanged.
+ *
  * Platform facts, verified on this hardware (core 1.1.13):
  *   Bus       : Wire1, SDA = 17, SCL = 16
  *   Address   : 0x6A
@@ -57,6 +61,7 @@ const uint8_t UUID_CONTROL[16] = {
 BLEService        repService(UUID_SERVICE);
 BLECharacteristic stateCharacteristic(UUID_STATE);
 BLECharacteristic controlCharacteristic(UUID_CONTROL);
+BLEBas            batteryService;   // standard Battery Service, 0x180F
 
 // Control commands from the app
 static const uint8_t CMD_SET_EXERCISE = 0x01;   // payload: exercise id
@@ -214,6 +219,84 @@ bool configureImu() {
 }
 
 // ---------------------------------------------------------------------------
+// Battery
+// ---------------------------------------------------------------------------
+
+// The XIAO measures the LiPo through a 1 MΩ / 510 kΩ divider on PIN_VBAT
+// (P0.31), switched by VBAT_ENABLE (P0.14, active low).
+static const float VBAT_DIVIDER = (1000.0f + 510.0f) / 510.0f;
+static const float ADC_FULL_SCALE_V = 2.4f;     // AR_INTERNAL_2_4
+static const float ADC_MAX = 4095.0f;           // 12-bit
+static const uint32_t BATTERY_PERIOD_MS = 10000;
+
+// LiPo open-circuit voltage to charge, at rest. The curve is flat in the
+// middle and steep at both ends, so a straight line between 3.3 V and 4.2 V
+// would read 50 % for most of the session and then collapse.
+struct BatteryPoint { float volts; uint8_t percent; };
+const BatteryPoint BATTERY_CURVE[] = {
+  { 4.20f, 100 }, { 4.15f, 95 }, { 4.11f, 90 }, { 4.08f, 85 }, { 4.02f, 80 },
+  { 3.98f,  75 }, { 3.95f, 70 }, { 3.91f, 65 }, { 3.87f, 60 }, { 3.85f, 55 },
+  { 3.84f,  50 }, { 3.82f, 45 }, { 3.80f, 40 }, { 3.79f, 35 }, { 3.77f, 30 },
+  { 3.75f,  25 }, { 3.73f, 20 }, { 3.71f, 15 }, { 3.69f, 10 }, { 3.61f,  5 },
+  { 3.27f,   0 },
+};
+const uint8_t BATTERY_POINTS = sizeof(BATTERY_CURVE) / sizeof(BATTERY_CURVE[0]);
+
+float batteryVolts = 0.0f;
+bool  batteryPrimed = false;
+uint8_t batteryPercent = 0;
+uint32_t lastBatteryMs = 0;
+
+void setupBattery() {
+  // The divider stays enabled for good. Seeed warns that driving P0.14 HIGH
+  // while the battery charges can put the full battery voltage on P0.31 and
+  // damage it; enabled, the divider only draws about 3 µA.
+  pinMode(VBAT_ENABLE, OUTPUT);
+  digitalWrite(VBAT_ENABLE, LOW);
+  analogReference(AR_INTERNAL_2_4);
+  analogReadResolution(12);
+}
+
+float readBatteryVolts() {
+  // Averaging smooths out the noise the radio puts on the ADC.
+  uint32_t sum = 0;
+  for (uint8_t i = 0; i < 16; i++) sum += analogRead(PIN_VBAT);
+  return (sum / 16.0f) * ADC_FULL_SCALE_V / ADC_MAX * VBAT_DIVIDER;
+}
+
+uint8_t percentFromVolts(float volts) {
+  if (volts >= BATTERY_CURVE[0].volts) return 100;
+  for (uint8_t i = 1; i < BATTERY_POINTS; i++) {
+    const BatteryPoint &hi = BATTERY_CURVE[i - 1];
+    const BatteryPoint &lo = BATTERY_CURVE[i];
+    if (volts >= lo.volts) {
+      float t = (volts - lo.volts) / (hi.volts - lo.volts);
+      return (uint8_t)(lo.percent + t * (hi.percent - lo.percent) + 0.5f);
+    }
+  }
+  return 0;
+}
+
+/* Measures every BATTERY_PERIOD_MS and publishes only when the level changes. */
+void updateBattery(uint32_t nowMs, bool force) {
+  if (!force && nowMs - lastBatteryMs < BATTERY_PERIOD_MS) return;
+  lastBatteryMs = nowMs;
+
+  float volts = readBatteryVolts();
+  // Slow average: a heavy rep sags the voltage for a moment, and the level
+  // on the phone should not jump around with it.
+  batteryVolts = batteryPrimed ? batteryVolts + 0.3f * (volts - batteryVolts) : volts;
+  batteryPrimed = true;
+
+  uint8_t percent = percentFromVolts(batteryVolts);
+  if (force || percent != batteryPercent) {
+    batteryPercent = percent;
+    batteryService.write(percent);
+    if (Bluefruit.connected()) batteryService.notify(percent);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Counting
 // ---------------------------------------------------------------------------
 
@@ -335,6 +418,8 @@ void startBle() {
   controlCharacteristic.setWriteCallback(onControlWrite);
   controlCharacteristic.begin();
 
+  batteryService.begin();
+
   Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
   Bluefruit.Advertising.addTxPower();
   Bluefruit.Advertising.addService(repService);
@@ -362,6 +447,9 @@ void setup() {
 
   imuReady = configureImu();
   startBle();
+
+  setupBattery();
+  updateBattery(millis(), true);
 }
 
 void loop() {
@@ -371,6 +459,8 @@ void loop() {
     digitalWrite(LED_BUILTIN, HIGH);
     ledOffAtMs = 0;
   }
+
+  updateBattery(nowMs, false);
 
   if (!imuReady) {
     // Slow double blink means the sensor never came up.
