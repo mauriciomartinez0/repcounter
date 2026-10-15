@@ -18,6 +18,11 @@ def test_catalog_matches_the_app_seed(client):
     assert len(exercises["squat"]["tutorialSteps"]) > 0
     assert exercises["goblet-squat"]["firmwareProfile"] == 1
     assert exercises["arnold-press"]["placement"] == "arm"
+    # 004: polea y máquinas de selector cuentan con el sensor sobre la pila.
+    for stack in ("pec-deck", "lat-pulldown", "triceps-pushdown"):
+        assert exercises[stack]["firmwareProfile"] == 2
+        assert exercises[stack]["placement"] == "equipment"
+    assert exercises["leg-press"]["firmwareProfile"] == 0   # de discos, sin pila
 
 
 def test_catalog_etag_and_304(client):
