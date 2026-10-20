@@ -21,13 +21,21 @@ G = 9.80665
 # Firmware constants.
 DEADBAND_MPS = 0.02
 MIN_ROM_M = 0.04
+GRIP_MARGIN_M = 0.02
+MAX_GRIP_LIFT_CM = 30
 LEAK_TAU_S = 3.0
 DEADBAND_G = 0.005
 STILL_ALPHA, STILL_G, STILL_MS = 0.1, 0.006, 250
 IDLE_MS, REFRACTORY_MS = 3000, 600
 
 
-def count(acc_g):
+def min_rom_for_grip(grip_cm):
+    """Travel each way to be a stroke, given how far taking the handle lifts
+    the stack (the app's setting)."""
+    return max(MIN_ROM_M, min(grip_cm, MAX_GRIP_LIFT_CM) * 0.01 + GRIP_MARGIN_M)
+
+
+def count(acc_g, min_rom=MIN_ROM_M):
     """acc_g: accelerometer reading along the vertical, in g (1.0 at rest)."""
     ref = np.mean(acc_g[: int(FS)])          # reference captured at rest
     v = smooth = rise = fall = 0.0
@@ -53,16 +61,16 @@ def count(acc_g):
         if phase == 0:                       # waiting for a lift
             if v > DEADBAND_MPS:
                 rise += v * DT
-            elif v < -DEADBAND_MPS:
+            elif v < -DEADBAND_MPS or still:
                 rise = 0.0
-            if rise >= MIN_ROM_M:
+            if rise >= min_rom:
                 phase, fall = 1, 0.0
         elif phase == 1:                     # lifted, waiting for the way down
             if v < -DEADBAND_MPS:
                 fall += -v * DT
             elif v > DEADBAND_MPS:
                 fall = 0.0
-            if fall >= MIN_ROM_M:
+            if fall >= min_rom:
                 phase = 2
             elif still and now - still_since >= IDLE_MS:
                 phase, rise = 0, 0.0
@@ -135,6 +143,28 @@ def fidgeting(rng, seconds=20):
     return 1.04 + np.gradient(np.gradient(pos, DT), DT) / G + rng.normal(0, 0.00106, len(pos))
 
 
+def gripped_set(rng, grip=0.06, n=8, h=0.40, regrips=1, residual_g=0.0):
+    """Taking the handle lifts the stack `grip` metres and the user holds it
+    there; letting go and taking it again (`regrips`) drops it and lifts it
+    again. Then `n` reps that come back to the grip height, and letting go."""
+    take = smooth_move(grip, 0.3)
+    strokes = [take, np.full(int(1.0 * FS), grip)]
+    for _ in range(regrips):
+        strokes += [grip - take, np.zeros(int(0.6 * FS)), take, np.full(int(1.0 * FS), grip)]
+    for _ in range(n):
+        up = smooth_move(h, 1.0)
+        strokes += [grip + up, np.full(int(0.15 * FS), grip + h), grip + h - up,
+                    np.full(int(0.4 * FS), grip)]
+    strokes.append(grip - take)
+    return to_accel(strokes, rng, 0.00106, 0.040, residual_g, 0.3)
+
+
+GRIP_CASES = {
+    "agarrar y soltar 3 veces, sin reps": (0, {"n": 0, "regrips": 3}),
+    "agarrar, 8 reps sin soltar, soltar": (8, {"regrips": 0}),
+    "agarrar, reacomodar, 8 reps, soltar": (8, {}),
+}
+
 CASES = {
     "al fallo, 45→22 cm, subida 1→2,4 s": (10, {}),
     "al fallo con vibración (4 mg)": (10, {"noise_g": 0.004}),
@@ -162,3 +192,13 @@ if __name__ == "__main__":
             print(f"  velocidad constante {vmax} m/s (trampa 6.3): 8 → {min(r)}–{max(r)}{mark}")
     print("quieto 20 s:", count(1.04 + rng.normal(0, 0.00106, int(20 * FS))))
     print("reacomodar el agarre (3 empujones de 2 cm):", count(fidgeting(rng)))
+    # The stack rises when the handle is taken: without the app's setting
+    # (4 cm minimum) and with it set to the real lift.
+    for grip_cm in (3, 6, 10):
+        print(f"la pila sube {grip_cm} cm al agarrar")
+        for name, (n, kw) in GRIP_CASES.items():
+            sets = [gripped_set(rng, grip=grip_cm / 100, **kw) for _ in range(10)]
+            for label, rom in (("sin ajuste", MIN_ROM_M), (f"ajuste {grip_cm} cm", min_rom_for_grip(grip_cm))):
+                r = [count(a, rom) for a in sets]
+                mark = "" if min(r) == max(r) == n else "   ✗"
+                print(f"  {name}, {label}: {n} → {min(r)}–{max(r)}{mark}")

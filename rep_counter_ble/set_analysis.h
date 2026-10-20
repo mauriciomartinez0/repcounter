@@ -9,6 +9,8 @@
  * Live (StackCounter): sample by sample, velocity from the vertical
  * acceleration, ZUPT when the stack is still, and a rep for every stroke up
  * and back down of at least 4 cm, told apart by the sign of the velocity.
+ * The app can raise that minimum (minRomForGrip) when taking the handle
+ * lifts the stack further than that.
  *
  * End of set (analyzeSet): two passes over the recording; the set gets the
  * larger count. The app compares it with the live count and only ever offers
@@ -39,6 +41,8 @@ static const float GRAVITY = 9.80665f;
 
 static const float DEADBAND_MPS = 0.02f;   // slower than this is not moving
 static const float MIN_ROM_M = 0.04f;      // travel each way to be a stroke
+static const float GRIP_MARGIN_M = 0.02f;  // above the grip lift, to be a stroke
+static const uint8_t MAX_GRIP_LIFT_CM = 30;
 static const float LEAK_TAU_S = 3.0f;      // residual error fades instead of piling up
 static const float DEADBAND_G = 0.005f;    // sensor noise, not movement
 static const float STILL_ALPHA = 0.1f;     // rest is judged on a smoothed signal...
@@ -46,6 +50,16 @@ static const float STILL_G = 0.006f;       // ...below this...
 static const uint32_t STILL_MS = 250;      // ...for this long
 static const uint32_t IDLE_MS = 3000;      // a lift that never came down
 static const uint32_t REFRACTORY_MS = 600;
+
+/* Travel each way to be a stroke, given how far the stack rises when the
+   user takes the handle (set from the app, per exercise). Taking it, letting
+   go and settling the grip move the stack by about that much, so a stroke
+   has to go clearly past it. */
+inline float minRomForGrip(uint8_t gripLiftCm) {
+  if (gripLiftCm > MAX_GRIP_LIFT_CM) gripLiftCm = MAX_GRIP_LIFT_CM;
+  float rom = gripLiftCm * 0.01f + GRIP_MARGIN_M;
+  return rom > MIN_ROM_M ? rom : MIN_ROM_M;
+}
 
 struct StackCounter {
   enum Phase : uint8_t { IDLE, LIFTING, LOWERING };
@@ -59,8 +73,13 @@ struct StackCounter {
   uint32_t lastRepMs = 0;
   bool anyRep = false;
   uint16_t reps = 0;
+  float minRom = MIN_ROM_M;    // setting, survives reset()
 
-  void reset() { *this = StackCounter(); }
+  void reset() {
+    float keep = minRom;
+    *this = StackCounter();
+    minRom = keep;
+  }
 
   /* vertical: acceleration along the vertical in g, with the rest reading
      already subtracted. Returns true when this sample completed a rep. */
@@ -87,11 +106,13 @@ struct StackCounter {
     const float v = velocity;
     switch (phase) {
       case IDLE:
-        // Travel up adds; any real move down starts over. The bump of the
-        // stack landing is a few millimetres and never reaches the minimum.
+        // Travel up adds; any real move down, or a stop, starts over. The
+        // bump of the stack landing is a few millimetres and never reaches
+        // the minimum. Nor does taking the handle: it lifts the stack a few
+        // centimetres and holds it there, which is not the start of a rep.
         if (v > DEADBAND_MPS) rise += v * DT;
-        else if (v < -DEADBAND_MPS) rise = 0.0f;
-        if (rise >= MIN_ROM_M) {
+        else if (v < -DEADBAND_MPS || still) rise = 0.0f;
+        if (rise >= minRom) {
           phase = LIFTING;
           fall = 0.0f;
         }
@@ -99,7 +120,7 @@ struct StackCounter {
       case LIFTING:
         if (v < -DEADBAND_MPS) fall += -v * DT;
         else if (v > DEADBAND_MPS) fall = 0.0f;
-        if (fall >= MIN_ROM_M) {
+        if (fall >= minRom) {
           phase = LOWERING;
         } else if (still && nowMs - stillSinceMs >= IDLE_MS) {
           phase = IDLE;
@@ -233,7 +254,8 @@ inline uint16_t findQuietRuns(const int16_t *a, uint32_t n, int32_t meanLimit,
 }
 
 /* Pass B: the live counter over the recording, residual bias corrected. */
-inline uint16_t passB(const int16_t *a, uint32_t n, Workspace &w) {
+inline uint16_t passB(const int16_t *a, uint32_t n, Workspace &w,
+                      float minRom = MIN_ROM_M) {
   uint16_t runCount = findQuietRuns(a, n, LONG_REST_MEAN_MMS2, LONG_REST_MIN_LEN, w.runs, MAX_RUNS);
   // Bias of each long rest, at its centre; interpolated between centres.
   float *centre = w.centre, *bias = w.bias;
@@ -260,6 +282,7 @@ inline uint16_t passB(const int16_t *a, uint32_t n, Workspace &w) {
   ref = refLen ? ref / refLen : 0.0f;
 
   StackCounter counter;
+  counter.minRom = minRom;
   for (uint32_t i = 0; i < n; i++) {
     float vertical = (a[i] - biasAt(i) - ref) / (1000.0f * GRAVITY);
     counter.update(vertical, (uint32_t)(i * 1000.0f / FS));
@@ -275,7 +298,8 @@ inline int16_t toVelocityUnits(float v) {
 }
 
 /* Pass A: TRASPASO.md. Turns the recording into velocity, in place. */
-inline uint16_t passA(int16_t *a, uint32_t n, Workspace &w) {
+inline uint16_t passA(int16_t *a, uint32_t n, Workspace &w,
+                      float minRom = MIN_ROM_M) {
   uint16_t runCount = findQuietRuns(a, n, QUIET_MEAN_MMS2, QUIET_MIN_LEN, w.runs, MAX_RUNS);
 
   // Residual bias: whatever the rest windows still read.
@@ -378,7 +402,7 @@ inline uint16_t passA(int16_t *a, uint32_t n, Workspace &w) {
   uint16_t reps = 0;
   int8_t previous = 0;
   for (uint16_t k = 0; k < count; k++) {
-    if (w.excursions[k].travel < MIN_ROM_M) continue;
+    if (w.excursions[k].travel < minRom) continue;
     int8_t sign = w.excursions[k].sign;
     if (sign == previous) continue;        // joined with the one before
     if (previous > 0 && sign < 0) reps++;
@@ -389,10 +413,11 @@ inline uint16_t passA(int16_t *a, uint32_t n, Workspace &w) {
 
 /* Runs both passes over the recording and returns the larger count.
    Destroys the recording (pass A works in place). */
-inline uint16_t analyzeSet(int16_t *samples, uint32_t n, Workspace &w) {
+inline uint16_t analyzeSet(int16_t *samples, uint32_t n, Workspace &w,
+                           float minRom = MIN_ROM_M) {
   if (n < 2) return 0;
-  uint16_t b = passB(samples, n, w);
-  uint16_t a = passA(samples, n, w);
+  uint16_t b = passB(samples, n, w, minRom);
+  uint16_t a = passA(samples, n, w, minRom);
   return a > b ? a : b;
 }
 

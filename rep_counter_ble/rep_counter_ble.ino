@@ -28,7 +28,9 @@
  * down, then stopped, told apart by the SIGN of the velocity rather than its
  * size, so a slow or half-range rep near failure still counts. The only size
  * test is 4 cm of travel each way, which separates a rep from adjusting the
- * grip. Checked against simulated sets with the measured noise and bias
+ * grip. On machines where taking the handle lifts the stack further than
+ * that, the app sends how far (CMD_SET_GRIP_LIFT) and the minimum rises to
+ * clear it. Checked against simulated sets with the measured noise and bias
  * (stack_sim.py); still needs confirming with real ones.
  *
  * The board also records the set (vertical acceleration, 120 s at most) and,
@@ -97,6 +99,7 @@ static const uint8_t CMD_SET_EXERCISE = 0x01;   // payload: exercise id
 static const uint8_t CMD_RESET_COUNT  = 0x02;
 static const uint8_t CMD_REZERO       = 0x03;
 static const uint8_t CMD_ANALYZE      = 0x04;   // payload: token echoed back
+static const uint8_t CMD_SET_GRIP_LIFT = 0x05;  // payload: cm the stack rises when the handle is taken
 
 // Analysis packet, version 1, 8 bytes little endian:
 //   0     uint8   version (1)
@@ -465,7 +468,8 @@ void analyzeSet(uint8_t token) {
     if (setRecorder.truncated) status = ANALYSIS_TRUNCATED;
     // Milliseconds of work for a full buffer. It consumes the recording,
     // which is fine: the set is closed.
-    found = stack::analyzeSet(setRecorder.samples, setRecorder.length, analysisWorkspace);
+    found = stack::analyzeSet(setRecorder.samples, setRecorder.length, analysisWorkspace,
+                              stackCounter.minRom);
     setRecorder.length = 0;
   }
 
@@ -507,6 +511,10 @@ void applyCommands() {
         break;
       case CMD_ANALYZE:
         analyzeSet(argument);
+        break;
+      case CMD_SET_GRIP_LIFT:
+        // Applies from the next sample, mid-set too; reset() keeps it.
+        stackCounter.minRom = stack::minRomForGrip(argument);
         break;
       default:
         break;
