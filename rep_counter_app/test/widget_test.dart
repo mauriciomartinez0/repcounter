@@ -191,6 +191,44 @@ void main() {
     );
   });
 
+  test('Grip lift is sent to the board and kept per exercise', () async {
+    final services = await _services();
+    final sensor = _FakeSensor();
+    const cable = Exercise(
+      id: 'test-cable-row',
+      name: 'Remo en polea',
+      muscleGroup: MuscleGroup.back,
+      equipment: Equipment.cable,
+      placement: SensorPlacement.equipment,
+      placementNote: 'Encima de la pila de pesas.',
+      firmwareProfile: kStackProfile,
+    );
+    WorkoutController workout() => WorkoutController.free(
+          repository: services.repository,
+          sensor: sensor,
+          exercise: cable,
+          settings: services.settings,
+        );
+
+    final first = workout()..start();
+    expect(first.onStack, isTrue);
+    expect(sensor.gripLifts, [0]);
+    first.setGripLift(7);
+    expect(first.gripLiftCm, 7);
+    expect(sensor.gripLifts.last, 7);
+    first.setGripLift(99);
+    expect(first.gripLiftCm, kMaxGripLiftCm);
+    first.setGripLift(6);
+    first.dispose();
+
+    // The next workout on the same exercise starts with it.
+    sensor.gripLifts.clear();
+    final second = workout()..start();
+    expect(second.gripLiftCm, 6);
+    expect(sensor.gripLifts, [6]);
+    second.dispose();
+  });
+
   testWidgets('Starts on login when signed out', (tester) async {
     final services = await tester.runAsync(_services);
     await tester.pumpWidget(RepCounterApp(services: services!));
@@ -238,4 +276,8 @@ class _FakeSensor extends SensorService {
   Future<void> resetCount() async => emit(reps: 0);
   @override
   Future<void> rezero() async {}
+
+  final List<int> gripLifts = [];
+  @override
+  Future<void> setGripLift(int cm) async => gripLifts.add(cm);
 }

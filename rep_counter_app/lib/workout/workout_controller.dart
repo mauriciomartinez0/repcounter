@@ -10,6 +10,7 @@ import 'package:uuid/uuid.dart';
 
 import '../data/models.dart';
 import '../data/repository.dart';
+import '../data/session_controllers.dart';
 import '../sensor/sensor_service.dart';
 
 enum WorkoutPhase { calibrating, counting, resting, finished }
@@ -36,6 +37,7 @@ class WorkoutController extends ChangeNotifier {
     required this.repository,
     required this.sensor,
     required Routine this.routine,
+    this.settings,
     DateTime Function()? clock,
   })  : _clock = clock ?? DateTime.now,
         assert(routine.items.isNotEmpty) {
@@ -48,6 +50,7 @@ class WorkoutController extends ChangeNotifier {
     required this.sensor,
     required Exercise exercise,
     double? weightKg,
+    this.settings,
     DateTime Function()? clock,
   })  : routine = null,
         _clock = clock ?? DateTime.now {
@@ -63,6 +66,10 @@ class WorkoutController extends ChangeNotifier {
   final GymRepository repository;
   final SensorService sensor;
   final Routine? routine;
+
+  /// Where the grip lift of each exercise is kept; without it the setting
+  /// lasts only for this workout.
+  final SettingsController? settings;
   final DateTime Function() _clock;
 
   late final DateTime _startedAt;
@@ -118,6 +125,24 @@ class WorkoutController extends ChangeNotifier {
           : item!.weightKg);
 
   int get reps => max(0, sensor.state.repCount);
+
+  /// The sensor rides the weight stack (cable and selector machines).
+  bool get onStack => _exercise.firmwareProfile == kStackProfile;
+
+  final Map<String, int> _gripLift = {};
+
+  /// How far the stack rises when the user takes the handle on this
+  /// exercise. Moves of that size are not counted as reps.
+  int get gripLiftCm =>
+      _gripLift[_exercise.id] ?? settings?.gripLiftCm(_exercise.id) ?? 0;
+
+  void setGripLift(int cm) {
+    final value = cm.clamp(0, kMaxGripLiftCm);
+    _gripLift[_exercise.id] = value;
+    settings?.setGripLiftCm(_exercise.id, value);
+    sensor.setGripLift(value);
+    _notify();
+  }
   bool get targetReached => targetReps != null && reps >= targetReps!;
 
   /// 0–1 while calibrating; the board does not report progress, so this is
@@ -162,6 +187,7 @@ class WorkoutController extends ChangeNotifier {
     _sawUncalibrated = false;
     _resetTracking();
     sensor.setExercise(_exercise.firmwareProfile);
+    if (onStack) sensor.setGripLift(gripLiftCm);
     sensor.rezero();
     // If the board recaptures so fast that we never see it uncalibrated,
     // trust its flag after a short wait.

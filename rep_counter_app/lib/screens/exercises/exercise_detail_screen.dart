@@ -166,6 +166,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
                     sensor: app.sensor,
                     exercise: exercise,
                     weightKg: _weight,
+                    settings: app.settings,
                   ),
                 ),
               ),

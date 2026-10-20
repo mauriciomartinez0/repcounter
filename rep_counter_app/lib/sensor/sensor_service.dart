@@ -22,6 +22,13 @@ final Guid kControlUuid = Guid('a1b20003-7f3c-4e8d-9a6b-2c5d8e0f1a3b');
 const int kCmdSetExercise = 0x01;
 const int kCmdResetCount = 0x02;
 const int kCmdRezero = 0x03;
+const int kCmdSetGripLift = 0x05;
+
+/// Firmware profile of the exercises with the sensor on the weight stack.
+const int kStackProfile = 2;
+
+/// Upper end of [SensorService.setGripLift]; the firmware caps it the same.
+const int kMaxGripLiftCm = 30;
 
 /// Everything the board publishes in one notification.
 ///
@@ -103,6 +110,12 @@ abstract class SensorService extends ChangeNotifier {
   /// Forget the resting pose and learn it again. The board clears
   /// [DeviceState.referenceCaptured] until the user holds still.
   Future<void> rezero();
+
+  /// Weight stack only: how many cm the stack rises when the user takes the
+  /// handle. The board then ignores moves of that size, so taking the handle
+  /// or letting it go does not count as a rep. Firmware without the command
+  /// ignores it.
+  Future<void> setGripLift(int cm);
 }
 
 class BleSensorService extends SensorService {
@@ -111,6 +124,7 @@ class BleSensorService extends SensorService {
   String _detail = '';
   DeviceState _state = DeviceState.empty;
   int _exerciseId = 0;
+  int _gripLiftCm = 0;
 
   BluetoothDevice? _device;
   BluetoothCharacteristic? _stateCharacteristic;
@@ -230,6 +244,7 @@ class BleSensorService extends SensorService {
       // After a reconnect the board may have restarted; tell it again what
       // we are counting.
       await setExercise(_exerciseId);
+      await setGripLift(_gripLiftCm);
     } catch (error) {
       _set(SensorStatus.failed, SensorFailure.error, '$error');
     }
@@ -268,6 +283,12 @@ class BleSensorService extends SensorService {
 
   @override
   Future<void> rezero() => _send([kCmdRezero]);
+
+  @override
+  Future<void> setGripLift(int cm) {
+    _gripLiftCm = cm.clamp(0, kMaxGripLiftCm);
+    return _send([kCmdSetGripLift, _gripLiftCm]);
+  }
 
   @override
   void dispose() {
@@ -398,6 +419,9 @@ class SimulatedSensorService extends SensorService {
     await resetCount();
     _startCalibration();
   }
+
+  @override
+  Future<void> setGripLift(int cm) async {}
 
   @override
   void dispose() {

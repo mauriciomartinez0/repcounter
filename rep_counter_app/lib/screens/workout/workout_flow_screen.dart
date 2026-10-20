@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../app_scope.dart';
 import '../../data/models.dart';
+import '../../sensor/sensor_service.dart';
 import '../../theme/app_icons.dart';
 import '../../theme/app_theme.dart';
 import '../../util/format.dart';
@@ -334,6 +335,10 @@ class _CounterViewState extends State<_CounterView> {
               ),
             ),
           ),
+          if (workout.onStack) ...[
+            GripLiftControl(workout: workout),
+            const SizedBox(height: 20),
+          ],
           Row(
             children: [
               AppIcon(
@@ -557,6 +562,10 @@ class _RestView extends StatelessWidget {
           ),
           stats,
           weight,
+          if (workout.onStack) ...[
+            GripLiftControl(workout: workout),
+            const SizedBox(height: 16),
+          ],
           if (workout.isFree) ...[
             PrimaryButton(
               label: 'Siguiente serie',
@@ -606,6 +615,70 @@ class _RestView extends StatelessWidget {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// Weight stack only: how far the stack rises when the user takes the
+/// handle. The board ignores moves of that size, so taking the handle,
+/// settling the grip or letting go does not count as a rep. Kept per
+/// exercise, since it depends on the machine.
+class GripLiftControl extends StatelessWidget {
+  const GripLiftControl({super.key, required this.workout});
+
+  final WorkoutController workout;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final cm = workout.gripLiftCm;
+    // Same rule as the firmware (minRomForGrip): 2 cm above the lift, and
+    // never under the 4 cm it always asks for.
+    final ignored = cm + 2 < 4 ? 4 : cm + 2;
+
+    Widget button(AppIconKind icon, String label, VoidCallback? onTap) =>
+        Pressable(
+          onTap: onTap,
+          semanticLabel: label,
+          child: Opacity(
+            opacity: onTap == null ? 0.4 : 1,
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: c.surface,
+                borderRadius: BorderRadius.circular(kRadius),
+              ),
+              child: Center(child: AppIcon(icon, size: 20, color: c.ink)),
+            ),
+          ),
+        );
+
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const AppLabel('Sube al agarrar'),
+              const SizedBox(height: 2),
+              Text('No cuenta movimientos de menos de $ignored cm',
+                  style: AppText.text(13, color: c.ink3)),
+            ],
+          ),
+        ),
+        button(AppIconKind.minus, 'Bajar un centímetro',
+            cm > 0 ? () => workout.setGripLift(cm - 1) : null),
+        SizedBox(
+          width: 72,
+          child: Center(
+            child: NumberWithUnit(
+                value: '$cm', unit: 'cm', size: 28, unitSize: 13),
+          ),
+        ),
+        button(AppIconKind.plus, 'Subir un centímetro',
+            cm < kMaxGripLiftCm ? () => workout.setGripLift(cm + 1) : null),
+      ],
     );
   }
 }

@@ -122,6 +122,7 @@ class RoutineDetailScreen extends StatelessWidget {
                                 repository: app.repository,
                                 sensor: app.sensor,
                                 routine: routine,
+                                settings: app.settings,
                               ),
                             ),
                   ),

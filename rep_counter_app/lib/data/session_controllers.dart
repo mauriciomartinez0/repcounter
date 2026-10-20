@@ -181,4 +181,19 @@ class SettingsController extends ChangeNotifier {
     notifyListeners();
     await _prefs?.setBool(_kDark, value);
   }
+
+  // How far the weight stack rises when the user takes the handle, per
+  // exercise: it depends on the machine, and stays on this phone.
+  static const _kGripLift = 'settings.gripLift.';
+
+  final Map<String, int> _gripLift = {};
+
+  int gripLiftCm(String exerciseId) =>
+      _gripLift[exerciseId] ?? _prefs?.getInt('$_kGripLift$exerciseId') ?? 0;
+
+  Future<void> setGripLiftCm(String exerciseId, int cm) async {
+    _gripLift[exerciseId] = cm;
+    notifyListeners();
+    await _prefs?.setInt('$_kGripLift$exerciseId', cm);
+  }
 }
