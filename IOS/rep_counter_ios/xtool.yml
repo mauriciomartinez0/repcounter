@@ -1,0 +1,12 @@
+version: 1
+
+# Apple registers the bundle ID against your account, and a free account is
+# limited to 10 App IDs per 7 days, so avoid burning them on typos.
+bundleID: com.mauromm.repcounter
+
+# Merged on top of the Info.plist xtool generates, so this file only needs the
+# keys xtool does not already set.
+infoPath: Info.plist
+
+# Same icon as the Flutter app.
+iconPath: Resources/AppIcon.png

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Mandatory. iOS kills the app on the spot if a CBCentralManager is
+         created without this key present. -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Rep Counter se conecta por Bluetooth al sensor para contar tus repeticiones.</string>
+
+    <!-- Keeps notifications arriving while the screen is locked. The board
+         keeps counting either way. -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>bluetooth-central</string>
+    </array>
+
+    <key>CFBundleDisplayName</key>
+    <string>Rep Counter</string>
+
+    <key>CFBundleName</key>
+    <string>Rep Counter</string>
+
+    <!-- Base URL of the Rep Counter API, without a trailing slash. The same
+         value as config/prod.json in the Flutter app. -->
+    <key>APIBaseURL</key>
+    <string>https://repcounter-production.up.railway.app</string>
+
+    <!-- true: fake sensor instead of Bluetooth (testing without the board). -->
+    <key>SensorSimulated</key>
+    <false/>
+
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+</dict>
+</plist>
