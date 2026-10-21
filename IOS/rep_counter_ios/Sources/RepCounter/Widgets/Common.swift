@@ -540,12 +540,17 @@ struct WeightStepper: View {
     /// Nil means body weight; the buttons then add load.
     let valueKg: Double?
     var large = true
+    /// Smaller still, to sit next to another stepper in a row.
+    var compact = false
     var step = 2.5
     let onChanged: (Double?) -> Void
     @Environment(\.colors) private var c
 
+    /// The API takes up to 500 kg.
+    private static let maxKg = 500.0
+
     var body: some View {
-        let box: CGFloat = large ? 72 : 56
+        let box: CGFloat = large ? 72 : (compact ? 44 : 56)
         HStack(spacing: 0) {
             stepButton(.minus, "Bajar peso", box: box, action: valueKg.map { v in
                 { onChanged(v - step <= 0 ? nil : v - step) }
@@ -553,23 +558,25 @@ struct WeightStepper: View {
             if large { Spacer(minLength: 0) }
             Group {
                 if let value = valueKg {
-                    NumberWithUnit(value: formatKg(value), unit: "kg", size: large ? 80 : 40,
-                                   unitSize: large ? 20 : 15)
+                    NumberWithUnit(value: formatKg(value), unit: "kg", size: large ? 80 : (compact ? 28 : 40),
+                                   unitSize: large ? 20 : (compact ? 13 : 15))
                 } else {
-                    Text("Corporal").font(.number(large ? 48 : 30)).foregroundStyle(c.ink)
+                    Text("Corporal").font(.number(large ? 48 : (compact ? 22 : 30))).foregroundStyle(c.ink)
                 }
             }
-            .frame(width: large ? nil : 108)
+            .lineLimit(1)
+            .frame(width: large ? nil : (compact ? 84 : 108))
             .minimumScaleFactor(0.5)
             if large { Spacer(minLength: 0) }
-            stepButton(.plus, "Subir peso", box: box) { onChanged((valueKg ?? 0) + step) }
+            stepButton(.plus, "Subir peso", box: box,
+                       action: (valueKg ?? 0) + step <= Self.maxKg ? { onChanged((valueKg ?? 0) + step) } : nil)
         }
     }
 
     private func stepButton(_ icon: AppIconKind, _ label: String, box: CGFloat,
                             action: (() -> Void)?) -> some View {
         Pressable(action: action, label: label) {
-            AppIcon(icon, size: large ? 28 : 24, color: c.ink)
+            AppIcon(icon, size: large ? 28 : (compact ? 20 : 24), color: c.ink)
                 .frame(width: box, height: box)
                 .background(c.surface, in: RoundedRectangle(cornerRadius: kRadius))
                 .opacity(action == nil ? 0.4 : 1)
@@ -584,6 +591,8 @@ struct CountStepper: View {
     var max = 999
     /// For screen readers: "Quitar una de repeticiones".
     var label = "repeticiones"
+    /// Smaller, to sit next to another stepper in a row.
+    var compact = false
     let onChanged: (Int) -> Void
     @Environment(\.colors) private var c
 
@@ -591,17 +600,19 @@ struct CountStepper: View {
         HStack(spacing: 0) {
             button(.minus, "Quitar una de \(label)", value > min ? { onChanged(value - 1) } : nil)
             Text("\(value)")
-                .font(.number(40))
+                .font(.number(compact ? 28 : 40))
                 .foregroundStyle(c.ink)
-                .frame(width: 72)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .frame(width: compact ? 52 : 72)
             button(.plus, "Sumar una de \(label)", value < max ? { onChanged(value + 1) } : nil)
         }
     }
 
     private func button(_ icon: AppIconKind, _ semantic: String, _ action: (() -> Void)?) -> some View {
         Pressable(action: action, label: semantic) {
-            AppIcon(icon, color: c.ink)
-                .frame(width: 56, height: 56)
+            AppIcon(icon, size: compact ? 20 : 24, color: c.ink)
+                .frame(width: compact ? 44 : 56, height: compact ? 44 : 56)
                 .background(c.surface, in: RoundedRectangle(cornerRadius: kRadius))
                 .opacity(action == nil ? 0.4 : 1)
         }

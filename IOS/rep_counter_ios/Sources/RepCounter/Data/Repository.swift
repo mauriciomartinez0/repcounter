@@ -281,6 +281,15 @@ final class GymRepository {
         saveOutbox()
     }
 
+    /// Drops a finished workout that has not been uploaded yet: every set was
+    /// deleted on the summary, and the server only takes sessions with sets.
+    func discardSession(_ sessionId: String) {
+        sessions.removeAll { $0.id == sessionId }
+        outbox.removeAll { $0.type == "uploadSession" && $0.id == sessionId && !$0.ready }
+        saveSessions()
+        saveOutbox()
+    }
+
     /// A finished workout can still be corrected on the summary; it is
     /// uploaded once the user taps "Listo".
     func commitSession(_ sessionId: String) {

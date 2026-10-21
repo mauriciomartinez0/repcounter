@@ -2,7 +2,8 @@
 //
 // Right after a workout the sets can still be corrected: tapping an exercise
 // opens its sets, so the last set (which has no rest screen after it) can be
-// fixed too. A set can come up short of the plan (12, 10, 9…) and the sensor
+// fixed too. Reps and weight can be changed and a set can be deleted, until
+// "Listo" uploads the session; after that it is read only. A set can come up short of the plan (12, 10, 9…) and the sensor
 // can also miss or double-count a rep; either way the history should hold
 // what was really done.
 
@@ -28,12 +29,12 @@ struct SummaryScreen: View {
                 exerciseName: name,
                 sets: session.sets.filter { $0.exerciseId == exerciseId }
             ) { corrected in
-                var k = 0
+                // The exercise's sets take their places in order; deleted
+                // ones leave their last places empty.
+                var remaining = corrected.makeIterator()
                 var updated = session
-                updated.sets = session.sets.map { s in
-                    guard s.exerciseId == exerciseId else { return s }
-                    defer { k += 1 }
-                    return corrected[k]
+                updated.sets = session.sets.compactMap { s in
+                    s.exerciseId == exerciseId ? remaining.next() : s
                 }
                 session = updated
                 repo.saveSession(updated)
@@ -43,8 +44,13 @@ struct SummaryScreen: View {
 
     private func close() {
         if justFinished {
-            // Corrections are over: now it can go to the server.
-            repo.commitSession(session.id)
+            if session.sets.isEmpty {
+                // Every set was deleted: there is nothing to keep.
+                repo.discardSession(session.id)
+            } else {
+                // Corrections are over: now it can go to the server.
+                repo.commitSession(session.id)
+            }
             Router.shared.blocked.remove(route)
             Router.shared.popToFirst()
         } else {
@@ -116,7 +122,9 @@ struct SummaryScreen: View {
                     }
                     if justFinished {
                         Spacer().frame(height: 16)
-                        Text("Toca un ejercicio para corregir sus repeticiones.")
+                        Text(session.sets.isEmpty
+                            ? "Eliminaste todas las series: al tocar Listo no se guarda el entrenamiento."
+                            : "Toca un ejercicio para corregir repeticiones y peso, o eliminar series.")
                             .font(.text(14))
                             .foregroundStyle(c.ink3)
                     }
@@ -253,8 +261,9 @@ private struct RepsSheet: View {
     }
 }
 
-/// All the sets of one exercise in a session, each with its own count.
-/// `onChanged` receives the full, corrected list every time a value changes.
+/// All the sets of one exercise in a session, each with its reps and weight,
+/// and a way to delete it. `onChanged` receives the full, corrected list
+/// every time something changes; a deleted set is simply not in it.
 @MainActor
 func editExerciseSets(exerciseName: String, sets: [SetRecord], onChanged: @escaping ([SetRecord]) -> Void) async {
     let _: Bool? = await OverlayCenter.shared.sheet { finish in
@@ -275,10 +284,12 @@ private struct SetsSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             Text(exerciseName).font(.text(22, .semibold)).foregroundStyle(c.ink)
             Spacer().frame(height: 4)
-            Text("Corrige las repeticiones de cada serie.").font(.text(16)).foregroundStyle(c.ink2)
+            Text("Corrige las repeticiones y el peso de cada serie, o elimina las que sobran.")
+                .font(.text(16))
+                .foregroundStyle(c.ink2)
             Spacer().frame(height: 12)
             // Short lists sit in the sheet as they are; long ones scroll.
-            if sets.count > 5 {
+            if sets.count > 3 {
                 ScrollView { rows(sets) }.frame(height: 400)
             } else {
                 rows(sets)
@@ -288,26 +299,68 @@ private struct SetsSheet: View {
         }
     }
 
+    private func update(_ updated: [SetRecord]) {
+        current = updated
+        onChanged(updated)
+    }
+
+    private func delete(at i: Int, in sets: [SetRecord]) {
+        let s = sets[i]
+        Task {
+            let weight = s.weightKg.map { "\(formatKg($0)) kg" } ?? "peso corporal"
+            let sure = await confirm(
+                title: "¿Eliminar la serie \(s.setNumber)?",
+                message: "Se quita del entrenamiento: \(s.reps) \(plural(s.reps, "repetición", "repeticiones")) "
+                    + "con \(weight).",
+                confirmLabel: "Eliminar"
+            )
+            guard sure else { return }
+            var updated = sets
+            updated.remove(at: i)
+            // The sets after it, in the same run, move up one number. A
+            // routine can repeat the exercise; the next run keeps its own.
+            for j in i..<updated.count {
+                guard updated[j].setNumber == s.setNumber + (j - i) + 1 else { break }
+                updated[j].setNumber -= 1
+            }
+            update(updated)
+            if updated.isEmpty { done() }
+        }
+    }
+
     private func rows(_ sets: [SetRecord]) -> some View {
         VStack(spacing: 0) {
             ForEach(Array(sets.enumerated()), id: \.offset) { i, s in
-                HStack {
-                    VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline) {
                         Text("Serie \(s.setNumber)").font(.text(17, .medium)).foregroundStyle(c.ink)
-                        Text(([s.weightKg == nil ? "corporal" : "\(formatKg(s.weightKg!)) kg"]
-                            + (s.targetReps.map { ["objetivo \($0)"] } ?? [])).joined(separator: " · "))
-                            .font(.text(14))
-                            .foregroundStyle(c.ink2)
+                        if let target = s.targetReps {
+                            Text("objetivo \(target)").font(.text(14)).foregroundStyle(c.ink2)
+                        }
+                        Spacer(minLength: 8)
+                        TextAction(label: "Eliminar", size: 14, underline: true) { delete(at: i, in: sets) }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    CountStepper(value: s.reps) { v in
-                        var updated = sets
-                        updated[i].reps = v
-                        current = updated
-                        onChanged(updated)
+                    HStack(alignment: .bottom, spacing: 0) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            AppLabel("Repeticiones")
+                            CountStepper(value: s.reps, compact: true) { v in
+                                var updated = sets
+                                updated[i].reps = v
+                                update(updated)
+                            }
+                        }
+                        Spacer(minLength: 8)
+                        VStack(alignment: .leading, spacing: 4) {
+                            AppLabel("Peso")
+                            WeightStepper(valueKg: s.weightKg, large: false, compact: true) { kg in
+                                var updated = sets
+                                updated[i].weightKg = kg
+                                update(updated)
+                            }
+                        }
                     }
                 }
-                .padding(.vertical, 10)
+                .padding(.vertical, 12)
                 .bottomRule(c.line)
             }
         }

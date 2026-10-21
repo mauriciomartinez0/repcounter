@@ -292,7 +292,8 @@ struct Routine: Hashable, Identifiable {
 /// One finished set, as counted by the sensor.
 struct SetRecord: Hashable {
     let exerciseId: String
-    let setNumber: Int
+    /// Renumbered when an earlier set is deleted on the summary.
+    var setNumber: Int
     var reps: Int
     var targetReps: Int?
     var weightKg: Double?
