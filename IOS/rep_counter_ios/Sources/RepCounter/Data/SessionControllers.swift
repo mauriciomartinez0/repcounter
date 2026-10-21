@@ -160,6 +160,21 @@ final class SettingsController {
         darkMode = value
         UserDefaults.standard.set(value, forKey: Self.kDark)
     }
+
+    // How far the weight stack rises when the user takes the handle, per
+    // exercise: it depends on the machine, and stays on this phone.
+    private static let kGripLift = "settings.gripLift."
+
+    private var gripLift: [String: Int] = [:]
+
+    func gripLiftCm(_ exerciseId: String) -> Int {
+        gripLift[exerciseId] ?? UserDefaults.standard.integer(forKey: Self.kGripLift + exerciseId)
+    }
+
+    func setGripLiftCm(_ exerciseId: String, _ cm: Int) {
+        gripLift[exerciseId] = cm
+        UserDefaults.standard.set(cm, forKey: Self.kGripLift + exerciseId)
+    }
 }
 
 extension String {

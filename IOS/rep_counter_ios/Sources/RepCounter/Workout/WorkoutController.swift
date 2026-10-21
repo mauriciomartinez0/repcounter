@@ -101,6 +101,9 @@ final class WorkoutController {
 
     @ObservationIgnored let repository: GymRepository
     @ObservationIgnored let sensor: SensorService
+    /// Where the grip lift of each exercise is kept; without it the setting
+    /// lasts only for this workout.
+    @ObservationIgnored let settings: SettingsController?
     let routine: Routine?
     let startedAt: Date
 
@@ -141,17 +144,21 @@ final class WorkoutController {
     @ObservationIgnored private var disposed = false
     @ObservationIgnored private var listener: UUID?
 
-    init(routine: Routine, repository: GymRepository, sensor: SensorService) {
+    init(routine: Routine, repository: GymRepository, sensor: SensorService,
+         settings: SettingsController? = nil) {
         self.repository = repository
         self.sensor = sensor
+        self.settings = settings
         self.routine = routine
         exercise = repository.exercise(routine.items[0].exerciseId)!
         startedAt = Date()
     }
 
-    init(freeExercise: Exercise, weightKg: Double?, repository: GymRepository, sensor: SensorService) {
+    init(freeExercise: Exercise, weightKg: Double?, repository: GymRepository, sensor: SensorService,
+         settings: SettingsController? = nil) {
         self.repository = repository
         self.sensor = sensor
+        self.settings = settings
         routine = nil
         exercise = freeExercise
         freeWeight = weightKg
@@ -172,6 +179,19 @@ final class WorkoutController {
     }
 
     var reps: Int { max(0, sensor.state.repCount) }
+
+    private var gripLift: [String: Int] = [:]
+
+    /// How far the stack rises when the user takes the handle on this
+    /// exercise. Moves of that size are not counted as reps.
+    var gripLiftCm: Int { gripLift[exercise.id] ?? settings?.gripLiftCm(exercise.id) ?? 0 }
+
+    func setGripLift(_ cm: Int) {
+        let value = min(kMaxGripLiftCm, max(0, cm))
+        gripLift[exercise.id] = value
+        settings?.setGripLiftCm(exercise.id, value)
+        sensor.setGripLift(value)
+    }
     var targetReached: Bool { targetReps != nil && reps >= targetReps! }
 
     /// Seconds since the rest started.
@@ -203,6 +223,7 @@ final class WorkoutController {
         sawUncalibrated = false
         resetTracking()
         sensor.setExercise(exercise.firmwareProfile)
+        if onStack { sensor.setGripLift(gripLiftCm) }
         sensor.rezero()
         // If the board recaptures so fast that we never see it uncalibrated,
         // trust its flag after a short wait.
@@ -256,7 +277,7 @@ final class WorkoutController {
     }
 
     /// Weight stack: the board sends the stack's speed where the angle goes.
-    private var onStack: Bool { exercise.firmwareProfile == kStackProfile }
+    var onStack: Bool { exercise.firmwareProfile == kStackProfile }
 
     /// Close the current set and move to rest, or to the end of the workout.
     /// On the weight stack the board first analyses the set; if it finds reps

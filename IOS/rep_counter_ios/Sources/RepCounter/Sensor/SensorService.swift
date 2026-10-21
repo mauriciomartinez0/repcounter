@@ -28,6 +28,10 @@ let kCmdSetExercise: UInt8 = 0x01
 let kCmdResetCount: UInt8 = 0x02
 let kCmdRezero: UInt8 = 0x03
 let kCmdAnalyze: UInt8 = 0x04
+let kCmdSetGripLift: UInt8 = 0x05
+
+/// Upper end of `SensorService.setGripLift`; the firmware caps it the same.
+let kMaxGripLiftCm = 30
 
 /// Everything the board publishes in one notification.
 ///
@@ -108,6 +112,7 @@ protocol SensorDriver: AnyObject {
     func setExercise(_ profile: Int)
     func resetCount()
     func rezero()
+    func setGripLift(_ cm: Int)
     /// Whether the board can analyse a set when it closes.
     var supportsSetAnalysis: Bool { get }
     func analyzeSet(token: UInt8)
@@ -165,6 +170,12 @@ final class SensorService {
     /// Forget the resting pose and learn it again. The board clears
     /// `referenceCaptured` until the user holds still.
     func rezero() { driver.rezero() }
+
+    /// Weight stack only: how many cm the stack rises when the user takes the
+    /// handle. The board then ignores moves of that size, so taking the handle
+    /// or letting it go does not count as a rep. Firmware without the command
+    /// ignores it.
+    func setGripLift(_ cm: Int) { driver.setGripLift(min(kMaxGripLiftCm, max(0, cm))) }
 
     var supportsSetAnalysis: Bool { connected && driver.supportsSetAnalysis }
 
@@ -234,6 +245,7 @@ final class BleSensorDriver: NSObject, SensorDriver {
     private var controlCharacteristic: CBCharacteristic?
     private var analysisCharacteristic: CBCharacteristic?
     private var exerciseId = 0
+    private var gripLiftCm = 0
     private var wantsScan = false
     private var scanTimeout: Task<Void, Never>?
     private var connectTimeout: Task<Void, Never>?
@@ -334,6 +346,11 @@ final class BleSensorDriver: NSObject, SensorDriver {
 
     func resetCount() { send([kCmdResetCount]) }
     func rezero() { send([kCmdRezero]) }
+
+    func setGripLift(_ cm: Int) {
+        gripLiftCm = cm
+        send([kCmdSetGripLift, UInt8(clamping: cm)])
+    }
 
     var supportsSetAnalysis: Bool { analysisCharacteristic != nil }
 
@@ -445,6 +462,7 @@ extension BleSensorDriver: CBCentralManagerDelegate, CBPeripheralDelegate {
             // After a reconnect the board may have restarted; tell it again what
             // we are counting.
             setExercise(exerciseId)
+            setGripLift(gripLiftCm)
         }
     }
 
@@ -593,6 +611,8 @@ final class SimulatedSensorDriver: SensorDriver {
     func send(_ bytes: [UInt8]) {}
 
     func setExercise(_ profile: Int) { exerciseId = profile }
+
+    func setGripLift(_ cm: Int) {}
 
     func resetCount() {
         reps = 0

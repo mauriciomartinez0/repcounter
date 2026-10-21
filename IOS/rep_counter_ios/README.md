@@ -106,6 +106,13 @@ la pila y a qué velocidad, en vez de la barra de ángulo.
   entran todas) y llega al servidor con la migración 004.
 - Las máquinas de discos (prensa, hack, remo en T, remo alto, Smith, talones)
   no tienen pila y siguen como antes.
+- **Sube al agarrar**: en algunas máquinas la pila se levanta unos cm al
+  tomar el agarre, y soltarlo o reacomodarlo podía contar como repetición. En
+  el contador y en el descanso hay un control − / + con los cm que sube; la
+  placa (comando `0x05`) exige entonces ese recorrido + 2 cm para contar una
+  subida o bajada, nunca menos de 4 cm. Se guarda por ejercicio en el
+  teléfono y se vuelve a mandar al reconectar. Con un valor alto, las
+  repeticiones parciales más cortas que ese mínimo dejan de contar.
 - Los umbrales del perfil 2 se ajustaron con series simuladas
   (`rep_counter_ble/stack_sim.py`) y falta confirmarlos con series reales.
 

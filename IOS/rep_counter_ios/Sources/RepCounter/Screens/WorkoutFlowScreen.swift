@@ -18,6 +18,7 @@ struct WorkoutFlowScreen: View {
 
     @Environment(GymRepository.self) private var repo
     @Environment(SensorService.self) private var sensor
+    @Environment(SettingsController.self) private var settings
     @Environment(\.colors) private var c
     @State private var workout: WorkoutController?
     @State private var closing = false
@@ -86,10 +87,11 @@ struct WorkoutFlowScreen: View {
             let controller: WorkoutController
             switch spec.kind {
             case .routine(let routine):
-                controller = WorkoutController(routine: routine, repository: repo, sensor: sensor)
+                controller = WorkoutController(routine: routine, repository: repo, sensor: sensor,
+                                               settings: settings)
             case .free(let exercise, let weightKg):
                 controller = WorkoutController(freeExercise: exercise, weightKg: weightKg,
-                                               repository: repo, sensor: sensor)
+                                               repository: repo, sensor: sensor, settings: settings)
             }
             workout = controller
             controller.start()
@@ -223,6 +225,8 @@ private struct CounterView: View {
             if stack {
                 FirmwareCheckBanner(workout: workout)
                     .padding(.bottom, 12)
+                GripLiftControl(workout: workout)
+                    .padding(.bottom, 20)
                 StackSpeed(cmPerSecond: sensor.state.angleDegrees)
             } else {
                 HStack(spacing: 8) {
@@ -416,6 +420,45 @@ private struct ReviewView: View {
     }
 }
 
+/// Weight stack only: how far the stack rises when the user takes the
+/// handle. The board ignores moves of that size, so taking the handle,
+/// settling the grip or letting go does not count as a rep. Kept per
+/// exercise, since it depends on the machine.
+private struct GripLiftControl: View {
+    let workout: WorkoutController
+    @Environment(\.colors) private var c
+
+    var body: some View {
+        let cm = workout.gripLiftCm
+        // Same rule as the firmware (minRomForGrip): 2 cm above the lift, and
+        // never under the 4 cm it always asks for.
+        let ignored = max(4, cm + 2)
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 2) {
+                AppLabel("Sube al agarrar")
+                Text("No cuenta movimientos de menos de \(ignored) cm")
+                    .font(.text(13))
+                    .foregroundStyle(c.ink3)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            stepButton(.minus, "Bajar un centímetro", cm > 0 ? { workout.setGripLift(cm - 1) } : nil)
+            NumberWithUnit(value: "\(cm)", unit: "cm", size: 28, unitSize: 13)
+                .frame(width: 72)
+            stepButton(.plus, "Subir un centímetro",
+                       cm < kMaxGripLiftCm ? { workout.setGripLift(cm + 1) } : nil)
+        }
+    }
+
+    private func stepButton(_ icon: AppIconKind, _ label: String, _ action: (() -> Void)?) -> some View {
+        Pressable(action: action, label: label) {
+            AppIcon(icon, size: 20, color: c.ink)
+                .frame(width: 44, height: 44)
+                .background(c.surface, in: RoundedRectangle(cornerRadius: kRadius))
+                .opacity(action == nil ? 0.4 : 1)
+        }
+    }
+}
+
 /// Live readout for the weight-stack profile: which way the stack is going and
 /// how fast. There is no angle or threshold to show; a rep is a full trip up
 /// and back down.
@@ -532,6 +575,10 @@ private struct RestView: View {
                 WeightStepper(valueKg: last?.weightKg, large: false) { workout.setLastWeight($0) }
             }
             .frame(height: 96)
+            if workout.onStack {
+                GripLiftControl(workout: workout)
+                    .padding(.bottom, 16)
+            }
             if workout.isFree {
                 PrimaryButton("Siguiente serie", action: workout.startNextSet)
                 Spacer().frame(height: 12)
