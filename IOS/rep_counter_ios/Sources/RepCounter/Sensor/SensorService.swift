@@ -19,6 +19,8 @@ let kControlUuid = CBUUID(string: "a1b20003-7f3c-4e8d-9a6b-2c5d8e0f1a3b")
 /// End-of-set analysis (weight-stack profile). Optional: older firmware
 /// does not have it.
 let kAnalysisUuid = CBUUID(string: "a1b20004-7f3c-4e8d-9a6b-2c5d8e0f1a3b")
+/// Developer mode: the raw accelerometer, 3 readings per packet. Optional.
+let kRawUuid = CBUUID(string: "a1b20005-7f3c-4e8d-9a6b-2c5d8e0f1a3b")
 
 // Standard Battery Service. Optional: firmware without it just shows no level.
 let kBatteryServiceUuid = CBUUID(string: "180F")
@@ -28,10 +30,24 @@ let kCmdSetExercise: UInt8 = 0x01
 let kCmdResetCount: UInt8 = 0x02
 let kCmdRezero: UInt8 = 0x03
 let kCmdAnalyze: UInt8 = 0x04
-let kCmdSetGripLift: UInt8 = 0x05
+// 0x05 (how far the stack rises when the handle is taken) is retired: the
+// board counts by the period of the movement and ignores it.
+let kCmdSetSensitivity: UInt8 = 0x06
+let kCmdSetRawStream: UInt8 = 0x07
 
-/// Upper end of `SensorService.setGripLift`; the firmware caps it the same.
-let kMaxGripLiftCm = 30
+/// One raw packet: sequence number, then x y z of each reading in counts.
+func parseRawPacket(_ data: Data) -> (UInt16, [Int16])? {
+    let b = [UInt8](data)
+    guard b.count >= 8, (b.count - 2) % 6 == 0 else { return nil }
+    let sequence = UInt16(b[0]) | UInt16(b[1]) << 8
+    var samples: [Int16] = []
+    var i = 2
+    while i + 1 < b.count {
+        samples.append(Int16(bitPattern: UInt16(b[i]) | UInt16(b[i + 1]) << 8))
+        i += 2
+    }
+    return (sequence, samples)
+}
 
 /// Everything the board publishes in one notification.
 ///
@@ -112,7 +128,8 @@ protocol SensorDriver: AnyObject {
     func setExercise(_ profile: Int)
     func resetCount()
     func rezero()
-    func setGripLift(_ cm: Int)
+    func setSensitivity(_ value: Int)
+    func setRawStream(_ on: Bool)
     /// Whether the board can analyse a set when it closes.
     var supportsSetAnalysis: Bool { get }
     func analyzeSet(token: UInt8)
@@ -131,6 +148,9 @@ final class SensorService {
     private(set) var batteryLevel: Int?
 
     @ObservationIgnored private var listeners: [UUID: () -> Void] = [:]
+    /// Developer mode: every state packet and every raw packet, as they arrive.
+    @ObservationIgnored var onStatePacket: ((DeviceState) -> Void)?
+    @ObservationIgnored var onRawPacket: ((UInt16, [Int16]) -> Void)?
     @ObservationIgnored private var driver: SensorDriver!
     @ObservationIgnored private var analysisToken: UInt8 = 0
     @ObservationIgnored private var analysisWaiter: (token: UInt8, resume: (SetAnalysis?) -> Void)?
@@ -171,11 +191,14 @@ final class SensorService {
     /// `referenceCaptured` until the user holds still.
     func rezero() { driver.rezero() }
 
-    /// Weight stack only: how many cm the stack rises when the user takes the
-    /// handle. The board then ignores moves of that size, so taking the handle
-    /// or letting it go does not count as a rep. Firmware without the command
-    /// ignores it.
-    func setGripLift(_ cm: Int) { driver.setGripLift(min(kMaxGripLiftCm, max(0, cm))) }
+    /// How strict counting is: 0 counts only full reps, 100 also short or
+    /// incomplete ones. Applies live, mid-set too. Firmware without the
+    /// command ignores it.
+    func setSensitivity(_ value: Int) { driver.setSensitivity(min(100, max(0, value))) }
+
+    /// Developer mode: the board also streams its raw accelerometer. Firmware
+    /// without it ignores the command and nothing arrives.
+    func setRawStream(_ on: Bool) { driver.setRawStream(on) }
 
     var supportsSetAnalysis: Bool { connected && driver.supportsSetAnalysis }
 
@@ -230,7 +253,12 @@ final class SensorService {
 
     fileprivate func publish(_ state: DeviceState) {
         self.state = state
+        onStatePacket?(state)
         notify()
+    }
+
+    fileprivate func deliverRaw(_ sequence: UInt16, _ samples: [Int16]) {
+        onRawPacket?(sequence, samples)
     }
 }
 
@@ -244,8 +272,10 @@ final class BleSensorDriver: NSObject, SensorDriver {
     private var stateCharacteristic: CBCharacteristic?
     private var controlCharacteristic: CBCharacteristic?
     private var analysisCharacteristic: CBCharacteristic?
+    private var rawCharacteristic: CBCharacteristic?
+    private var wantsRaw = false
     private var exerciseId = 0
-    private var gripLiftCm = 0
+    private var sensitivity = 50
     private var wantsScan = false
     private var scanTimeout: Task<Void, Never>?
     private var connectTimeout: Task<Void, Never>?
@@ -347,9 +377,16 @@ final class BleSensorDriver: NSObject, SensorDriver {
     func resetCount() { send([kCmdResetCount]) }
     func rezero() { send([kCmdRezero]) }
 
-    func setGripLift(_ cm: Int) {
-        gripLiftCm = cm
-        send([kCmdSetGripLift, UInt8(clamping: cm)])
+    func setSensitivity(_ value: Int) {
+        sensitivity = value
+        send([kCmdSetSensitivity, UInt8(clamping: value)])
+    }
+
+    func setRawStream(_ on: Bool) {
+        wantsRaw = on
+        guard let peripheral, status == .ready else { return }
+        if let raw = rawCharacteristic { peripheral.setNotifyValue(on, for: raw) }
+        send([kCmdSetRawStream, on ? 1 : 0])
     }
 
     var supportsSetAnalysis: Bool { analysisCharacteristic != nil }
@@ -397,6 +434,7 @@ extension BleSensorDriver: CBCentralManagerDelegate, CBPeripheralDelegate {
             stateCharacteristic = nil
             controlCharacteristic = nil
             analysisCharacteristic = nil
+            rawCharacteristic = nil
             if status == .ready {
                 set(.failed, .lost)
             } else if status == .connecting {
@@ -415,7 +453,8 @@ extension BleSensorDriver: CBCentralManagerDelegate, CBPeripheralDelegate {
                 fail("El servicio no está en este dispositivo")
                 return
             }
-            peripheral.discoverCharacteristics([kStateUuid, kControlUuid, kAnalysisUuid], for: service)
+            peripheral.discoverCharacteristics([kStateUuid, kControlUuid, kAnalysisUuid, kRawUuid],
+                                               for: service)
         }
     }
 
@@ -439,6 +478,8 @@ extension BleSensorDriver: CBCentralManagerDelegate, CBPeripheralDelegate {
                 } else if characteristic.uuid == kAnalysisUuid {
                     analysisCharacteristic = characteristic
                     peripheral.setNotifyValue(true, for: characteristic)
+                } else if characteristic.uuid == kRawUuid {
+                    rawCharacteristic = characteristic
                 }
             }
             guard let state = stateCharacteristic, controlCharacteristic != nil else {
@@ -462,7 +503,8 @@ extension BleSensorDriver: CBCentralManagerDelegate, CBPeripheralDelegate {
             // After a reconnect the board may have restarted; tell it again what
             // we are counting.
             setExercise(exerciseId)
-            setGripLift(gripLiftCm)
+            setSensitivity(sensitivity)
+            if wantsRaw { setRawStream(true) }
         }
     }
 
@@ -476,6 +518,12 @@ extension BleSensorDriver: CBCentralManagerDelegate, CBPeripheralDelegate {
             if characteristic.uuid == kAnalysisUuid {
                 if let value = characteristic.value, let packet = SetAnalysis.parse(value) {
                     service?.deliverAnalysis(token: packet.token, packet.analysis)
+                }
+                return
+            }
+            if characteristic.uuid == kRawUuid {
+                if let value = characteristic.value, let (sequence, samples) = parseRawPacket(value) {
+                    service?.deliverRaw(sequence, samples)
                 }
                 return
             }
@@ -506,6 +554,9 @@ final class SimulatedSensorDriver: SensorDriver {
     private var velocity: Double?
     private var battery = 87
     private var ticks = 0
+    private var streamingRaw = false
+    private var rawSequence: UInt16 = 0
+    private var rawProduced = 0.0
     /// Reps the fake board "missed" live; the analysis finds them.
     private var missed = 0
 
@@ -594,6 +645,34 @@ final class SimulatedSensorDriver: SensorDriver {
         } else {
             publish(angle)
         }
+        streamRaw(angle: angle)
+    }
+
+    /// Developer mode: readings like the board's (104 Hz, counts of 0.122 mg),
+    /// three to a packet, from the same fake movement.
+    private func streamRaw(angle: Double) {
+        guard streamingRaw else { return }
+        rawProduced += 104 * Self.tick
+        let w = 2 * Double.pi / Self.repSeconds
+        var samples: [Int16] = []
+        while rawProduced >= 1 {
+            rawProduced -= 1
+            var x = 0.0, z = 1.0
+            if exerciseId == kStackProfile {
+                z += 0.15 * w * w * cos(2 * .pi * phase) / 9.80665
+            } else {
+                x = sin(angle * .pi / 180)
+                z = cos(angle * .pi / 180)
+            }
+            for g in [x, 0.0, z] {
+                samples.append(Int16(clamping: Int(((g + Double.random(in: -0.002...0.002)) / 0.000122).rounded())))
+            }
+            if samples.count == 9 {
+                service?.deliverRaw(rawSequence, samples)
+                rawSequence &+= 1
+                samples = []
+            }
+        }
     }
 
     var supportsSetAnalysis: Bool { true }
@@ -618,7 +697,9 @@ final class SimulatedSensorDriver: SensorDriver {
 
     func setExercise(_ profile: Int) { exerciseId = profile }
 
-    func setGripLift(_ cm: Int) {}
+    func setSensitivity(_ value: Int) {}
+
+    func setRawStream(_ on: Bool) { streamingRaw = on }
 
     func resetCount() {
         reps = 0

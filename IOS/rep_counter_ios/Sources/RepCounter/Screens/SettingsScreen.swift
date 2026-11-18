@@ -70,6 +70,39 @@ struct SettingsScreen: View {
                     AppLabel("Sincronización")
                     Spacer().frame(height: 4)
                     SyncStatusRow()
+                    Spacer().frame(height: 32)
+                    AppLabel("Desarrollador")
+                    Spacer().frame(height: 4)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Modo desarrollador")
+                                .font(.text(19, .medium))
+                                .foregroundStyle(c.ink)
+                            Text("Graba cada serie con los datos del sensor para revisar el conteo.")
+                                .font(.text(14))
+                                .foregroundStyle(c.ink2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        AppSwitch(value: settings.developerMode, label: "Modo desarrollador") {
+                            settings.setDeveloperMode($0)
+                        }
+                    }
+                    .padding(.vertical, 16)
+                    .bottomRule(c.line)
+                    if settings.developerMode {
+                        Pressable(action: { Router.shared.push(.devPanel) }, label: "Abrir el panel desarrollador") {
+                            HStack {
+                                Text("Panel desarrollador")
+                                    .font(.text(19, .medium))
+                                    .foregroundStyle(c.ink)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                AppIcon(.forward, size: 20, color: c.ink2)
+                            }
+                            .frame(height: 64)
+                            .bottomRule(c.line)
+                        }
+                    }
+                    Spacer().frame(height: 16)
                 }
                 .padding(.horizontal, kGutter)
             }

@@ -101,7 +101,7 @@ final class WorkoutController {
 
     @ObservationIgnored let repository: GymRepository
     @ObservationIgnored let sensor: SensorService
-    /// Where the grip lift of each exercise is kept; without it the setting
+    /// Where the sensitivity of each exercise is kept; without it the setting
     /// lasts only for this workout.
     @ObservationIgnored let settings: SettingsController?
     let routine: Routine?
@@ -182,18 +182,31 @@ final class WorkoutController {
 
     var reps: Int { max(0, sensor.state.repCount) }
 
-    private var gripLift: [String: Int] = [:]
+    private var sensitivities: [String: Int] = [:]
 
-    /// How far the stack rises when the user takes the handle on this
-    /// exercise. Moves of that size are not counted as reps.
-    var gripLiftCm: Int { gripLift[exercise.id] ?? settings?.gripLiftCm(exercise.id) ?? 0 }
+    /// Developer mode: records every set for the developer panel.
+    @ObservationIgnored private var dev: DevCaptureRecorder?
+    @ObservationIgnored private var devLive = 0
+    @ObservationIgnored private var devFound: Int?
+    /// The capture of the set just recorded, so the screen can ask how many
+    /// reps were really done. Nil outside developer mode.
+    private(set) var lastCaptureId: String?
 
-    func setGripLift(_ cm: Int) {
-        let value = min(kMaxGripLiftCm, max(0, cm))
-        gripLift[exercise.id] = value
-        settings?.setGripLiftCm(exercise.id, value)
-        sensor.setGripLift(value)
+    /// How strict the counter is on this exercise: 0 counts only full reps,
+    /// 100 also short or incomplete ones.
+    var sensitivity: Int {
+        sensitivities[exercise.id] ?? settings?.sensitivity(exercise.id) ?? SettingsController.defaultSensitivity
     }
+
+    func setSensitivity(_ value: Int) {
+        let v = min(100, max(0, value))
+        guard v != sensitivity else { return }
+        sensitivities[exercise.id] = v
+        settings?.setSensitivity(exercise.id, v)
+        sensor.setSensitivity(v)
+        dev?.event("sensitivity", Double(v))
+    }
+
     var targetReached: Bool { targetReps != nil && reps >= targetReps! }
 
     /// Seconds since the rest started.
@@ -217,6 +230,7 @@ final class WorkoutController {
         guard !started else { return }
         started = true
         listener = sensor.addListener { [weak self] in self?.onSensor() }
+        if settings?.developerMode == true { dev = DevCaptureRecorder(sensor: sensor) }
         beginExercise()
     }
 
@@ -224,8 +238,10 @@ final class WorkoutController {
         phase = .calibrating
         sawUncalibrated = false
         resetTracking()
+        devBegin()
+        dev?.event("calibrating")
         sensor.setExercise(exercise.firmwareProfile)
-        if onStack { sensor.setGripLift(gripLiftCm) }
+        sensor.setSensitivity(sensitivity)
         sensor.rezero()
         // If the board recaptures so fast that we never see it uncalibrated,
         // trust its flag after a short wait.
@@ -255,18 +271,21 @@ final class WorkoutController {
                 phase = .counting
                 resetTracking()
                 sensor.resetCount()
+                dev?.event("counting")
             }
         case .counting:
             maxAngle = max(maxAngle, state.angleDegrees)
             tracer.add(state.angleDegrees)
             if state.repCount > lastRepCount {
                 lastRepCount = state.repCount
+                dev?.event("rep", Double(state.repCount))
                 if let v = state.lastRepVelocity { velocities.append(v) }
                 if targetReached {
                     autoFinish.schedule(after: Self.autoFinishDelay) { [weak self] in self?.finishSet() }
                 }
             } else if state.repCount < lastRepCount {
                 // The board was reset (button or reconnect).
+                dev?.event("boardReset", Double(state.repCount))
                 resetTracking()
             }
         case .analyzing, .reviewing, .resting, .finished:
@@ -278,6 +297,12 @@ final class WorkoutController {
     func restartSet() {
         resetTracking()
         sensor.resetCount()
+        dev?.event("restart")
+    }
+
+    private func devBegin() {
+        devFound = nil
+        dev?.begin(exercise, setNumber: setNumber, targetReps: targetReps, sensitivity: sensitivity)
     }
 
     /// Weight stack: the board sends the stack's speed where the angle goes.
@@ -291,6 +316,8 @@ final class WorkoutController {
         autoFinish.cancel()
         let live = reps
         analysisNote = nil
+        devLive = live
+        dev?.event("finish", Double(live))
         guard onStack else {
             recordSet(reps: live)
             return
@@ -310,6 +337,8 @@ final class WorkoutController {
                 self.recordSet(reps: live)
                 return
             }
+            self.dev?.event("analysis", Double(analysis.found))
+            if analysis.status != .unavailable { self.devFound = analysis.found }
             guard analysis.status != .unavailable else {
                 self.analysisNote = .notRecorded
                 self.recordSet(reps: live)
@@ -331,6 +360,7 @@ final class WorkoutController {
     func resolveReview(addFound: Bool) {
         guard phase == .reviewing, let review else { return }
         self.review = nil
+        dev?.event("review", addFound ? 1 : 0)
         analysisNote = addFound
             ? .added(extra: review.extra, total: review.found)
             : .keptLive(live: review.live, found: review.found)
@@ -352,6 +382,7 @@ final class WorkoutController {
             completedAt: Date(),
             trace: tracer.trace(onStack: onStack)
         ))
+        if let dev { lastCaptureId = dev.finish(live: devLive, analysisFound: devFound, recorded: reps) }
         restItemIndex = itemIndex
 
         next = planNext()
@@ -406,6 +437,8 @@ final class WorkoutController {
             phase = .counting
             resetTracking()
             sensor.resetCount()
+            devBegin()
+            dev?.event("counting")
         } else {
             beginExercise()
         }
@@ -454,6 +487,7 @@ final class WorkoutController {
     func finish() -> WorkoutSession? {
         // A set in progress with reps counts. Ending the workout does not wait
         // for the analysis: the set keeps its live count.
+        devLive = reps
         if phase == .counting && reps > 0 {
             autoFinish.cancel()
             recordSet(reps: reps)
@@ -466,6 +500,8 @@ final class WorkoutController {
         stopTimers()
         sensor.removeListener(listener)
         listener = nil
+        dev?.stop()
+        dev = nil
         if records.isEmpty { return nil }
         let session = WorkoutSession(
             id: sessionId,
@@ -491,5 +527,7 @@ final class WorkoutController {
         stopTimers()
         sensor.removeListener(listener)
         listener = nil
+        dev?.stop()
+        dev = nil
     }
 }

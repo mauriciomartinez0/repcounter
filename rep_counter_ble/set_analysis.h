@@ -7,10 +7,11 @@
  * the Python reference in set_analysis.py.
  *
  * Live (StackCounter): sample by sample, velocity from the vertical
- * acceleration, ZUPT when the stack is still, and a rep for every stroke up
- * and back down of at least 4 cm, told apart by the sign of the velocity.
- * The app can raise that minimum (minRomForGrip) when taking the handle
- * lifts the stack further than that.
+ * acceleration, ZUPT when the stack is still, height from the velocity, and
+ * one wave per trough -> peak -> trough of the height. The waves that repeat
+ * (similar period, not much smaller than the others) are reps (Periodic):
+ * taking the handle or settling the grip makes a wave too, but not one like
+ * the reps, so there is nothing to configure.
  *
  * End of set (analyzeSet): two passes over the recording; the set gets the
  * larger count. The app compares it with the live count and only ever offers
@@ -39,50 +40,160 @@ static const float GRAVITY = 9.80665f;
 // Live counter
 // ---------------------------------------------------------------------------
 
-static const float DEADBAND_MPS = 0.02f;   // slower than this is not moving
-static const float MIN_ROM_M = 0.04f;      // travel each way to be a stroke
-static const float GRIP_MARGIN_M = 0.02f;  // above the grip lift, to be a stroke
-static const uint8_t MAX_GRIP_LIFT_CM = 30;
 static const float LEAK_TAU_S = 3.0f;      // residual error fades instead of piling up
 static const float DEADBAND_G = 0.005f;    // sensor noise, not movement
 static const float STILL_ALPHA = 0.1f;     // rest is judged on a smoothed signal...
 static const float STILL_G = 0.006f;       // ...below this...
 static const uint32_t STILL_MS = 250;      // ...for this long
-static const uint32_t IDLE_MS = 3000;      // a lift that never came down
-static const uint32_t REFRACTORY_MS = 600;
 
-/* Travel each way to be a stroke, given how far the stack rises when the
-   user takes the handle (set from the app, per exercise). Taking it, letting
-   go and settling the grip move the stack by about that much, so a stroke
-   has to go clearly past it. */
-inline float minRomForGrip(uint8_t gripLiftCm) {
-  if (gripLiftCm > MAX_GRIP_LIFT_CM) gripLiftCm = MAX_GRIP_LIFT_CM;
-  float rom = gripLiftCm * 0.01f + GRIP_MARGIN_M;
-  return rom > MIN_ROM_M ? rom : MIN_ROM_M;
+// Counting by the period of the height curve (stack_sim.py has the same).
+// Each threshold goes from strict (sensitivity 0) through the default (50)
+// to lenient (100); the app sets the sensitivity live with a slider.
+struct Tuning {
+  float turnM;           // the height has to come back this much to be a turn
+  float minAmpM;         // smaller waves are noise, nudges, the landing bump
+  float similarAmp;      // first two reps: amplitude ratio...
+  float similarPeriod;   // ...and period ratio
+  float ampFraction;     // then: this much of the usual amplitude, or
+  float fadeFraction;    // this much of the last rep (a set to failure shrinks)...
+  float periodMin;       // ...and a period within this of the usual one
+  float periodMax;
+  float settled;         // resting counts as the bottom only this far down
+};
+
+//                                 turn   minAmp  simA  simP  ampF  fadeF  perMin      perMax settled
+static const Tuning TUNING_STRICT  = { 0.03f, 0.05f,  0.5f, 0.6f, 0.5f, 0.8f,  0.5f,       2.0f, 0.8f };
+static const Tuning TUNING_DEFAULT = { 0.02f, 0.03f, 0.35f, 0.5f, 0.3f, 0.6f,  1.0f / 3,   3.0f, 0.5f };
+static const Tuning TUNING_LENIENT = { 0.01f, 0.015f, 0.2f, 0.35f, 0.1f, 0.3f, 0.2f,       5.0f, 0.25f };
+static const uint8_t DEFAULT_SENSITIVITY = 50;
+
+/* The thresholds for a sensitivity of 0–100. 50 gives the defaults exactly. */
+inline Tuning tuningFor(uint8_t sensitivity) {
+  if (sensitivity > 100) sensitivity = 100;
+  const Tuning &m = TUNING_DEFAULT;
+  const Tuning &e = sensitivity < 50 ? TUNING_STRICT : TUNING_LENIENT;
+  float f = sensitivity < 50 ? (50 - sensitivity) / 50.0f : (sensitivity - 50) / 50.0f;
+  auto mix = [f](float mid, float end) { return mid + (end - mid) * f; };
+  return { mix(m.turnM, e.turnM), mix(m.minAmpM, e.minAmpM), mix(m.similarAmp, e.similarAmp),
+           mix(m.similarPeriod, e.similarPeriod), mix(m.ampFraction, e.ampFraction),
+           mix(m.fadeFraction, e.fadeFraction), mix(m.periodMin, e.periodMin),
+           mix(m.periodMax, e.periodMax), mix(m.settled, e.settled) };
 }
 
-struct StackCounter {
-  enum Phase : uint8_t { IDLE, LIFTING, LOWERING };
+static const float NEAR_M = 0.01f;         // still at the bottom: the rep has not left yet
+static const uint32_t SETTLE_MS = 800;     // resting this long closes a wave: a slow stroke reads as rest midway
+static const uint8_t HISTORY = 5;
+static const uint8_t PENDING = 3;          // waves kept while waiting for the first pair
 
-  float velocity = 0.0f;       // m/s, positive up
-  float smoothed = 0.0f;
-  float rise = 0.0f;           // m travelled up in the current stroke
-  float fall = 0.0f;           // m travelled down
-  Phase phase = IDLE;
-  uint32_t stillSinceMs = 0;
-  uint32_t lastRepMs = 0;
-  bool anyRep = false;
+// Pass A drops velocity excursions shorter than this before pairing them.
+static const float MIN_ROM_M = 0.04f;
+
+/* Which waves are reps: the ones that repeat. The first one waits for a
+   second one like it, among the last few waves (then both count); after that a wave counts when its
+   period is close to the usual one and it is not much smaller. Taking the
+   handle, letting go or settling the grip make waves too, but not like the
+   reps of the set. Used live and by pass A. */
+struct Periodic {
+  float amps[HISTORY];
+  float periods[HISTORY];
+  uint8_t count = 0;
+  float pendingAmp[PENDING];
+  float pendingPeriod[PENDING];
+  uint8_t pendingCount = 0;
   uint16_t reps = 0;
-  float minRom = MIN_ROM_M;    // setting, survives reset()
 
-  void reset() {
-    float keep = minRom;
-    *this = StackCounter();
-    minRom = keep;
+  static float ratio(float a, float b) {
+    float lo = a < b ? a : b, hi = a < b ? b : a;
+    return hi > 0.0f ? lo / hi : 0.0f;
   }
 
+  /* Upper median, like sorted(x)[len // 2]. */
+  static float median(const float *x, uint8_t n) {
+    float s[HISTORY];
+    for (uint8_t i = 0; i < n; i++) {
+      float v = x[i];
+      uint8_t j = i;
+      while (j > 0 && s[j - 1] > v) { s[j] = s[j - 1]; j--; }
+      s[j] = v;
+    }
+    return s[n / 2];
+  }
+
+  void push(float amp, float period) {
+    if (count == HISTORY) {
+      for (uint8_t i = 1; i < HISTORY; i++) { amps[i - 1] = amps[i]; periods[i - 1] = periods[i]; }
+      count--;
+    }
+    amps[count] = amp;
+    periods[count] = period;
+    count++;
+  }
+
+  /* amp in m, period in s. Returns how many reps this wave added. */
+  uint8_t add(float amp, float period, const Tuning &t) {
+    if (amp < t.minAmpM || period <= 0.0f) return 0;
+    if (count == 0) {
+      for (int8_t i = (int8_t)pendingCount - 1; i >= 0; i--) {   // newest first
+        if (ratio(pendingAmp[i], amp) >= t.similarAmp &&
+            ratio(pendingPeriod[i], period) >= t.similarPeriod) {
+          push(pendingAmp[i], pendingPeriod[i]);
+          push(amp, period);
+          pendingCount = 0;
+          reps += 2;
+          return 2;
+        }
+      }
+      if (pendingCount == PENDING) {
+        for (uint8_t i = 1; i < PENDING; i++) {
+          pendingAmp[i - 1] = pendingAmp[i];
+          pendingPeriod[i - 1] = pendingPeriod[i];
+        }
+        pendingCount--;
+      }
+      pendingAmp[pendingCount] = amp;
+      pendingPeriod[pendingCount] = period;
+      pendingCount++;
+      return 0;
+    }
+    float refAmp = median(amps, count), refPeriod = median(periods, count);
+    if ((amp >= t.ampFraction * refAmp || amp >= t.fadeFraction * amps[count - 1]) &&
+        period >= t.periodMin * refPeriod && period <= t.periodMax * refPeriod) {
+      push(amp, period);
+      reps++;
+      return 1;
+    }
+    return 0;
+  }
+};
+
+/* Live counter: velocity from the vertical acceleration (ZUPT when the
+   stack is still), height from the velocity, and one wave per trough → peak
+   → trough of the height. Periodic decides which waves are reps; there is no
+   minimum travel to configure. */
+struct StackCounter {
+  float velocity = 0.0f;       // m/s, positive up
+  float smoothed = 0.0f;
+  float height = 0.0f;         // m, from where the set started; drifts, only shape matters
+  uint32_t stillSinceMs = 0;
+  bool rising = true;
+  float trough = 0.0f, peak = 0.0f, bottom = 0.0f;
+  uint32_t departMs = 0, arriveMs = 0;
+  Periodic waves;
+  uint16_t reps = 0;
+  Tuning tuning = TUNING_DEFAULT;   // setting, survives reset()
+
+  void reset() {
+    Tuning keep = tuning;
+    *this = StackCounter();
+    tuning = keep;
+  }
+
+  /* Going up, for the app's arrow. */
+  bool lifting() const { return rising && height > trough + tuning.turnM; }
+
   /* vertical: acceleration along the vertical in g, with the rest reading
-     already subtracted. Returns true when this sample completed a rep. */
+     already subtracted. Returns true when this sample added reps (two at
+     once when the second rep confirms the first). */
   bool update(float vertical, uint32_t nowMs) {
     smoothed += STILL_ALPHA * (vertical - smoothed);
     if (fabsf(vertical) < DEADBAND_G) vertical = 0.0f;
@@ -102,43 +213,36 @@ struct StackCounter {
     } else {
       stillSinceMs = 0;
     }
+    height += velocity * DT;
 
-    const float v = velocity;
-    switch (phase) {
-      case IDLE:
-        // Travel up adds; any real move down, or a stop, starts over. The
-        // bump of the stack landing is a few millimetres and never reaches
-        // the minimum. Nor does taking the handle: it lifts the stack a few
-        // centimetres and holds it there, which is not the start of a rep.
-        if (v > DEADBAND_MPS) rise += v * DT;
-        else if (v < -DEADBAND_MPS || still) rise = 0.0f;
-        if (rise >= minRom) {
-          phase = LIFTING;
-          fall = 0.0f;
-        }
-        break;
-      case LIFTING:
-        if (v < -DEADBAND_MPS) fall += -v * DT;
-        else if (v > DEADBAND_MPS) fall = 0.0f;
-        if (fall >= minRom) {
-          phase = LOWERING;
-        } else if (still && nowMs - stillSinceMs >= IDLE_MS) {
-          phase = IDLE;
-          rise = 0.0f;
-        }
-        break;
-      case LOWERING:
-        if (v > -DEADBAND_MPS) {   // the descent ended
-          phase = IDLE;
-          rise = 0.0f;
-          if (!anyRep || nowMs - lastRepMs >= REFRACTORY_MS) {
-            reps++;
-            lastRepMs = nowMs;
-            anyRep = true;
-            return true;
-          }
-        }
-        break;
+    const float h = height;
+    if (rising) {
+      if (h < trough) trough = h;
+      if (h <= trough + NEAR_M) { departMs = nowMs; peak = h; }
+      if (h > peak) peak = h;
+      if (h <= peak - tuning.turnM) {         // turned at the top
+        rising = false;
+        bottom = h;
+        arriveMs = nowMs;
+      }
+      return false;
+    }
+    if (h < bottom) { bottom = h; arriveMs = nowMs; }
+    // Turned at the bottom, or came to rest there: a full wave. A rest
+    // higher up is a pause at the top, not the end of it.
+    bool settled = still && nowMs - stillSinceMs >= SETTLE_MS &&
+                   peak - bottom >= tuning.settled * (peak - trough);
+    if (h >= bottom + tuning.turnM || settled) {
+      uint8_t added = waves.add((2.0f * peak - trough - bottom) / 2.0f,
+                                (arriveMs - departMs) / 1000.0f, tuning);
+      rising = true;
+      trough = bottom;
+      peak = h;
+      departMs = nowMs;
+      if (added) {
+        reps = waves.reps;
+        return true;
+      }
     }
     return false;
   }
@@ -255,7 +359,7 @@ inline uint16_t findQuietRuns(const int16_t *a, uint32_t n, int32_t meanLimit,
 
 /* Pass B: the live counter over the recording, residual bias corrected. */
 inline uint16_t passB(const int16_t *a, uint32_t n, Workspace &w,
-                      float minRom = MIN_ROM_M) {
+                      const Tuning &tuning = TUNING_DEFAULT) {
   uint16_t runCount = findQuietRuns(a, n, LONG_REST_MEAN_MMS2, LONG_REST_MIN_LEN, w.runs, MAX_RUNS);
   // Bias of each long rest, at its centre; interpolated between centres.
   float *centre = w.centre, *bias = w.bias;
@@ -282,7 +386,7 @@ inline uint16_t passB(const int16_t *a, uint32_t n, Workspace &w,
   ref = refLen ? ref / refLen : 0.0f;
 
   StackCounter counter;
-  counter.minRom = minRom;
+  counter.tuning = tuning;
   for (uint32_t i = 0; i < n; i++) {
     float vertical = (a[i] - biasAt(i) - ref) / (1000.0f * GRAVITY);
     counter.update(vertical, (uint32_t)(i * 1000.0f / FS));
@@ -299,7 +403,7 @@ inline int16_t toVelocityUnits(float v) {
 
 /* Pass A: TRASPASO.md. Turns the recording into velocity, in place. */
 inline uint16_t passA(int16_t *a, uint32_t n, Workspace &w,
-                      float minRom = MIN_ROM_M) {
+                      const Tuning &tuning = TUNING_DEFAULT) {
   uint16_t runCount = findQuietRuns(a, n, QUIET_MEAN_MMS2, QUIET_MIN_LEN, w.runs, MAX_RUNS);
 
   // Residual bias: whatever the rest windows still read.
@@ -397,27 +501,36 @@ inline uint16_t passA(int16_t *a, uint32_t n, Workspace &w,
     i = j;
   }
 
-  // Drop the small ones (grip adjustments), join same-sign neighbours, and
-  // count every up followed by a down.
-  uint16_t reps = 0;
-  int8_t previous = 0;
+  // Drop the small ones (nudges, bumps) and join same-sign neighbours, in
+  // place. Every up followed by a down is a wave; the ones that repeat are
+  // reps, as live.
+  uint16_t joined = 0;
   for (uint16_t k = 0; k < count; k++) {
-    if (w.excursions[k].travel < minRom) continue;
-    int8_t sign = w.excursions[k].sign;
-    if (sign == previous) continue;        // joined with the one before
-    if (previous > 0 && sign < 0) reps++;
-    previous = sign;
+    const Excursion e = w.excursions[k];
+    if (e.travel < MIN_ROM_M) continue;
+    if (joined && w.excursions[joined - 1].sign == e.sign) {
+      w.excursions[joined - 1].end = e.end;
+      w.excursions[joined - 1].travel += e.travel;
+    } else {
+      w.excursions[joined++] = e;
+    }
   }
-  return reps;
+  Periodic waves;
+  for (uint16_t k = 0; k + 1 < joined; k++) {
+    const Excursion &up = w.excursions[k], &down = w.excursions[k + 1];
+    if (up.sign > 0 && down.sign < 0)
+      waves.add((up.travel + down.travel) / 2.0f, (down.end - up.start) * DT, tuning);
+  }
+  return waves.reps;
 }
 
 /* Runs both passes over the recording and returns the larger count.
    Destroys the recording (pass A works in place). */
 inline uint16_t analyzeSet(int16_t *samples, uint32_t n, Workspace &w,
-                           float minRom = MIN_ROM_M) {
+                           const Tuning &tuning = TUNING_DEFAULT) {
   if (n < 2) return 0;
-  uint16_t b = passB(samples, n, w, minRom);
-  uint16_t a = passA(samples, n, w, minRom);
+  uint16_t b = passB(samples, n, w, tuning);
+  uint16_t a = passA(samples, n, w, tuning);
   return a > b ? a : b;
 }
 

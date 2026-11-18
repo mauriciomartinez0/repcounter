@@ -10,3 +10,6 @@
 
 # Archivos de bloqueo de LibreOffice.
 .~lock.*
+
+# Developer-mode captures pulled from the iPhone (personal recordings).
+rep_counter_ble/dev/captures/

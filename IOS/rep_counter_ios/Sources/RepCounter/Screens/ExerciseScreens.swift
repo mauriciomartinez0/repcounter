@@ -314,9 +314,8 @@ struct ExerciseDetailScreen: View {
 }
 
 /// The side of the stack as an alternative mount. The counting does not care
-/// how the sensor is turned, only that it moves with the stack and does not
-/// shift after calibration: in simulation up to 2-3° of slip is harmless, and
-/// from 4° it starts losing slow reps.
+/// how the sensor is turned (the board uses the length of the acceleration),
+/// only that it moves with the stack: loose, it rattles and adds bumps.
 struct StackSideMountNote: View {
     @Environment(\.colors) private var c
 
@@ -327,8 +326,8 @@ struct StackSideMountNote: View {
                 + "abajo no se mueven. Cuenta igual, sin importar cómo quede girado.")
                 .font(.text(16))
                 .foregroundStyle(c.ink)
-            Text("Que quede plano y firme. Si con los golpes se desliza o queda torcido, el conteo se "
-                + "desajusta: vuelve a pegarlo y empieza el ejercicio de nuevo para que se recalibre.")
+            Text("Que quede firme. Si queda torcido o se gira un poco no pasa nada, pero si se suelta y "
+                + "golpetea suma movimientos que no hiciste: vuelve a pegarlo.")
                 .font(.text(15))
                 .foregroundStyle(c.ink2)
         }

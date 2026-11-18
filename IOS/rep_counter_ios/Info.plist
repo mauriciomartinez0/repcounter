@@ -29,6 +29,14 @@
     <key>SensorSimulated</key>
     <false/>
 
+    <!-- Developer mode: the capture files in Documents can be copied to a
+         computer over USB (rep_counter_ble/dev/pull_captures.sh) and seen
+         in the Files app. -->
+    <key>UIFileSharingEnabled</key>
+    <true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key>
+    <true/>
+
     <key>UISupportedInterfaceOrientations</key>
     <array>
         <string>UIInterfaceOrientationPortrait</string>

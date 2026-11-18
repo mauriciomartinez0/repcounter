@@ -13,7 +13,8 @@ Two passes, and the set gets the larger count:
        rest windows -> residual bias out -> integrate to velocity with ZUPT
        anchored on the edges of each rest window -> 4th-order Butterworth,
        forward and backward (zero phase) -> excursions of the velocity sign,
-       merged and filtered by travel -> an up followed by a down is one rep.
+       merged and filtered by travel -> an up followed by a down is a wave,
+       and the waves that repeat are reps (stack_sim.Periodic, as live).
 
   B. The live counter (StackCounter) run again over the recording, with the
      residual bias measured in every long rest and interpolated in time.
@@ -25,10 +26,10 @@ the rolling standard deviation only, and a smooth stroke barely varies over
 erased the reps (trap 6.3, wider than the document says). Rest here also
 needs the mean acceleration to be near zero.
 
-Simulated with stack_sim.py over 672 sets: the live count plus what this
-adds never went above the true count, was exact with up to ±0.5 mg of
-residual bias, and recovered missed reps in 12 sets. At ±1 mg and beyond it
-can still be one short on a slow set taken to failure.
+Simulated with stack_sim.py over 672 sets, counting by period with nothing
+configured: the live count plus what this adds never went above the true
+count, and was one short in 19 sets, all slow (4 s / 4 s) sets taken to
+failure. The previous counter, with the grip lift set right, was short in 18.
 
 Run it to check it against the simulated sets in stack_sim.py:
 
@@ -129,7 +130,7 @@ def filtfilt(x):
     return sosfilt(sosfilt(x)[::-1])[::-1]
 
 
-def count_reps(v, min_rom=MIN_ROM_M):
+def count_reps(v, sensitivity=50):
     """Excursions of the velocity sign -> reps. Also returns the excursions."""
     n = len(v)
     p99 = np.percentile(np.abs(v), 99) if n else 0.0
@@ -159,7 +160,7 @@ def count_reps(v, min_rom=MIN_ROM_M):
         return out
 
     exc = merge(exc)
-    exc = [e for e in exc if e[3] >= min_rom]       # grip adjustments out
+    exc = [e for e in exc if e[3] >= MIN_ROM_M]     # nudges and bumps out
     # With the small ones gone, same-sign neighbours belong together.
     joined = []
     for e in exc:
@@ -167,13 +168,20 @@ def count_reps(v, min_rom=MIN_ROM_M):
             joined[-1][2], joined[-1][3] = e[2], joined[-1][3] + e[3]
         else:
             joined.append(list(e))
-    reps = sum(1 for a, b in zip(joined, joined[1:]) if a[0] > 0 and b[0] < 0)
-    return reps, joined
+    # An up followed by a down is a wave; the ones that repeat are reps, as
+    # live (stack_sim.Periodic): taking the handle is a wave too, but not
+    # one like the others.
+    from stack_sim import Periodic, tuning
+    waves = Periodic(tuning(sensitivity))
+    for a, b in zip(joined, joined[1:]):
+        if a[0] > 0 and b[0] < 0:
+            waves.add((a[3] + b[3]) / 2, (b[2] - a[1]) * DT)
+    return waves.reps, joined
 
 
-def pass_a(acc, min_rom=MIN_ROM_M):
+def pass_a(acc, sensitivity=50):
     runs = quiet_runs(acc)
-    reps, _ = count_reps(filtfilt(zupt_velocity(acc, runs)), min_rom)
+    reps, _ = count_reps(filtfilt(zupt_velocity(acc, runs)), sensitivity)
     return reps
 
 
@@ -187,18 +195,18 @@ def bias_curve(acc):
     return np.interp(np.arange(len(acc)), centres, means)
 
 
-def pass_b(acc, min_rom=MIN_ROM_M):
+def pass_b(acc, sensitivity=50):
     import stack_sim
     corrected = acc - bias_curve(acc)
     # stack_sim.count captures its reference from the first second, which is
     # already zero here: the buffer holds acceleration with the bias removed.
-    return stack_sim.count(1.0 + corrected / G, min_rom)
+    return stack_sim.count(1.0 + corrected / G, sensitivity)
 
 
-def analyze(acc_ms2, min_rom=MIN_ROM_M):
+def analyze(acc_ms2, sensitivity=50):
     """acc_ms2: vertical acceleration of the set, m/s², bias removed at rest."""
     acc = np.asarray(acc_ms2, dtype=float)
-    return max(pass_a(acc, min_rom), pass_b(acc, min_rom))
+    return max(pass_a(acc, sensitivity), pass_b(acc, sensitivity))
 
 
 def from_sim(acc_g):
@@ -251,10 +259,9 @@ if __name__ == "__main__":
     print("quieto 20 s → análisis", analyze(from_sim(quiet)))
     print("reacomodar el agarre → análisis", analyze(from_sim(sim.fidgeting(rng))))
     for grip_cm in (6, 10):
-        rom = sim.min_rom_for_grip(grip_cm)
         for name, (n, kw) in sim.GRIP_CASES.items():
-            found = [analyze(from_sim(sim.gripped_set(rng, grip=grip_cm / 100, **kw)), rom)
+            found = [analyze(from_sim(sim.gripped_set(rng, grip=grip_cm / 100, **kw)))
                      for _ in range(8)]
-            print(f"la pila sube {grip_cm} cm, con el ajuste; {name} → análisis "
+            print(f"la pila sube {grip_cm} cm; {name} → análisis "
                   f"{min(found)}–{max(found)} de {n}")
     print(", ".join(f"{k}: {v}" for k, v in tally.items()))

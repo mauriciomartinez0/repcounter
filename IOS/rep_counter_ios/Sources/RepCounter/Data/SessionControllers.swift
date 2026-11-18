@@ -149,11 +149,20 @@ final class AuthController {
 @Observable
 final class SettingsController {
     private static let kDark = "settings.dark"
+    private static let kDeveloper = "settings.developer"
 
     private(set) var darkMode = false
+    /// Records every set (raw accelerometer included) for the developer panel.
+    private(set) var developerMode = false
 
     func load() {
         darkMode = UserDefaults.standard.bool(forKey: Self.kDark)
+        developerMode = UserDefaults.standard.bool(forKey: Self.kDeveloper)
+    }
+
+    func setDeveloperMode(_ value: Bool) {
+        developerMode = value
+        UserDefaults.standard.set(value, forKey: Self.kDeveloper)
     }
 
     func setDarkMode(_ value: Bool) {
@@ -161,19 +170,19 @@ final class SettingsController {
         UserDefaults.standard.set(value, forKey: Self.kDark)
     }
 
-    // How far the weight stack rises when the user takes the handle, per
-    // exercise: it depends on the machine, and stays on this phone.
-    private static let kGripLift = "settings.gripLift."
+    // How strict the rep counter is, per exercise (0 strict, 100 lenient):
+    // what counts as a rep depends on the movement, and stays on this phone.
+    private static let kSensitivity = "settings.sensitivity."
+    static let defaultSensitivity = 50
 
-    private var gripLift: [String: Int] = [:]
-
-    func gripLiftCm(_ exerciseId: String) -> Int {
-        gripLift[exerciseId] ?? UserDefaults.standard.integer(forKey: Self.kGripLift + exerciseId)
+    func sensitivity(_ exerciseId: String) -> Int {
+        let key = Self.kSensitivity + exerciseId
+        return UserDefaults.standard.object(forKey: key) == nil
+            ? Self.defaultSensitivity : UserDefaults.standard.integer(forKey: key)
     }
 
-    func setGripLiftCm(_ exerciseId: String, _ cm: Int) {
-        gripLift[exerciseId] = cm
-        UserDefaults.standard.set(cm, forKey: Self.kGripLift + exerciseId)
+    func setSensitivity(_ exerciseId: String, _ value: Int) {
+        UserDefaults.standard.set(value, forKey: Self.kSensitivity + exerciseId)
     }
 }
 

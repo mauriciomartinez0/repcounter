@@ -96,6 +96,15 @@ struct WorkoutFlowScreen: View {
             workout = controller
             controller.start()
         }
+        .onChange(of: workout?.lastCaptureId) { _, id in
+            // Developer mode: right after the set, while it is fresh.
+            guard let id, let recorded = workout?.lastRecord?.reps else { return }
+            Task {
+                if let n = await askReps(title: "¿Cuántas hiciste de verdad?", initial: recorded, target: nil) {
+                    DevCaptureStore.shared.update(id, trueReps: n)
+                }
+            }
+        }
         .onDisappear {
             // Only when the workout leaves the stack, not when the picker or
             // the connection screen covers it.
@@ -225,7 +234,7 @@ private struct CounterView: View {
             if stack {
                 FirmwareCheckBanner(workout: workout)
                     .padding(.bottom, 12)
-                GripLiftControl(workout: workout)
+                SensitivityControl(workout: workout)
                     .padding(.bottom, 20)
                 StackSpeed(cmPerSecond: sensor.state.angleDegrees)
             } else {
@@ -267,6 +276,8 @@ private struct CounterView: View {
                 }
                 .font(.text(13))
                 .foregroundStyle(c.ink3)
+                Spacer().frame(height: 20)
+                SensitivityControl(workout: workout)
             }
         }
         .padding(EdgeInsets(top: 0, leading: kGutter, bottom: 40, trailing: kGutter))
@@ -424,37 +435,80 @@ private struct ReviewView: View {
 /// handle. The board ignores moves of that size, so taking the handle,
 /// settling the grip or letting go does not count as a rep. Kept per
 /// exercise, since it depends on the machine.
-private struct GripLiftControl: View {
+/// How strict the counter is, like a volume slider: drag towards "Flexible"
+/// and short or incomplete reps count too, towards "Estricto" only full
+/// ones. It reaches the board right away, mid-set too, and is kept per
+/// exercise.
+private struct SensitivityControl: View {
     let workout: WorkoutController
     @Environment(\.colors) private var c
 
-    var body: some View {
-        let cm = workout.gripLiftCm
-        // Same rule as the firmware (minRomForGrip): 2 cm above the lift, and
-        // never under the 4 cm it always asks for.
-        let ignored = max(4, cm + 2)
-        HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
-                AppLabel("Sube al agarrar")
-                Text("No cuenta movimientos de menos de \(ignored) cm")
-                    .font(.text(13))
-                    .foregroundStyle(c.ink3)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            stepButton(.minus, "Bajar un centímetro", cm > 0 ? { workout.setGripLift(cm - 1) } : nil)
-            NumberWithUnit(value: "\(cm)", unit: "cm", size: 28, unitSize: 13)
-                .frame(width: 72)
-            stepButton(.plus, "Subir un centímetro",
-                       cm < kMaxGripLiftCm ? { workout.setGripLift(cm + 1) } : nil)
+    private func hint(_ v: Int) -> String {
+        switch v {
+        case ..<25: "Solo cuenta repeticiones completas"
+        case ..<45: "Pide repeticiones casi completas"
+        case ...55: "Normal"
+        case ...75: "También cuenta repeticiones algo cortas"
+        default: "Cuenta repeticiones cortas o incompletas"
         }
     }
 
-    private func stepButton(_ icon: AppIconKind, _ label: String, _ action: (() -> Void)?) -> some View {
-        Pressable(action: action, label: label) {
-            AppIcon(icon, size: 20, color: c.ink)
-                .frame(width: 44, height: 44)
-                .background(c.surface, in: RoundedRectangle(cornerRadius: kRadius))
-                .opacity(action == nil ? 0.4 : 1)
+    var body: some View {
+        let v = workout.sensitivity
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                AppLabel("Sensibilidad")
+                Spacer()
+                Text(hint(v)).font(.text(13)).foregroundStyle(c.ink3)
+            }
+            SensitivitySlider(value: v, onChange: workout.setSensitivity)
+            HStack {
+                Text("Estricto")
+                Spacer()
+                Text("Flexible")
+            }
+            .font(.text(12))
+            .foregroundStyle(c.ink3)
+        }
+    }
+}
+
+/// Track, lime fill and a knob, in steps of 5.
+private struct SensitivitySlider: View {
+    let value: Int
+    let onChange: (Int) -> Void
+    @Environment(\.colors) private var c
+
+    var body: some View {
+        GeometryReader { geo in
+            let knob: CGFloat = 28
+            let width = max(1, geo.size.width - knob)
+            let x = CGFloat(value) / 100 * width
+            ZStack(alignment: .leading) {
+                Capsule().fill(c.track).frame(height: 6)
+                Capsule().fill(c.mark).frame(width: x + knob / 2, height: 6)
+                Circle()
+                    .fill(c.ink)
+                    .frame(width: knob, height: knob)
+                    .offset(x: x)
+            }
+            .frame(height: 44)
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onChanged { g in
+                let raw = (g.location.x - knob / 2) / width * 100
+                onChange(Int((min(100, max(0, raw)) / 5).rounded()) * 5)
+            })
+        }
+        .frame(height: 44)
+        .accessibilityElement()
+        .accessibilityLabel("Sensibilidad del contador")
+        .accessibilityValue("\(value) %")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: onChange(min(100, value + 10))
+            case .decrement: onChange(max(0, value - 10))
+            @unknown default: break
+            }
         }
     }
 }
@@ -581,10 +635,8 @@ private struct RestView: View {
                 WeightStepper(valueKg: last?.weightKg, large: false) { workout.setLastWeight($0) }
             }
             .frame(height: 96)
-            if workout.onStack {
-                GripLiftControl(workout: workout)
-                    .padding(.bottom, 16)
-            }
+            SensitivityControl(workout: workout)
+                .padding(.bottom, 16)
             if workout.isFree {
                 PrimaryButton("Siguiente serie", action: workout.startNextSet)
                 Spacer().frame(height: 12)

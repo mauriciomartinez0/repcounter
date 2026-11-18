@@ -22,16 +22,17 @@
  * Weight stack (profile 2): on a cable or selector machine the sensor sits on
  * the top plate of the stack, which moves straight up and down without
  * rotating, so the tilt angle never changes. That profile follows vertical
- * velocity instead: acceleration along the gravity axis, minus the reading at
- * rest (which cancels the accelerometer bias on that axis), integrated with a
- * slow leak and reset to zero whenever the stack is still. A rep is up, then
- * down, then stopped, told apart by the SIGN of the velocity rather than its
- * size, so a slow or half-range rep near failure still counts. The only size
- * test is 4 cm of travel each way, which separates a rep from adjusting the
- * grip. On machines where taking the handle lifts the stack further than
- * that, the app sends how far (CMD_SET_GRIP_LIFT) and the minimum rises to
- * clear it. Checked against simulated sets with the measured noise and bias
- * (stack_sim.py); still needs confirming with real ones.
+ * velocity instead: the length of the acceleration minus its length at rest
+ * (1 g plus the vertical acceleration, however the sensor is turned, so a
+ * tilted or hand-held sensor does not leak gravity in), integrated with a
+ * slow leak and reset to zero whenever the stack is still. Integrated again it
+ * is the height of the stack, one wave per rep, and the count follows the
+ * PERIOD of that curve: the waves that repeat (similar period, not much
+ * smaller than the others) are reps. Taking the handle, letting go or
+ * settling the grip make waves too, but not like the reps of the set, so
+ * nothing has to be configured. The first rep shows up when the second one
+ * confirms it. Checked against simulated sets with the measured noise and
+ * bias (stack_sim.py); still needs confirming with real ones.
  *
  * The board also records the set (vertical acceleration, 120 s at most) and,
  * when the app closes the set (CMD_ANALYZE), analyses it as TRASPASO.md
@@ -88,10 +89,17 @@ const uint8_t UUID_ANALYSIS[16] = {
   0x8d, 0x4e, 0x3c, 0x7f, 0x04, 0x00, 0xb2, 0xa1
 };
 
+// Raw a1b20005-... (notify): developer mode, the accelerometer as read.
+const uint8_t UUID_RAW[16] = {
+  0x3b, 0x1a, 0x0f, 0x8e, 0x5d, 0x2c, 0x6b, 0x9a,
+  0x8d, 0x4e, 0x3c, 0x7f, 0x05, 0x00, 0xb2, 0xa1
+};
+
 BLEService        repService(UUID_SERVICE);
 BLECharacteristic stateCharacteristic(UUID_STATE);
 BLECharacteristic controlCharacteristic(UUID_CONTROL);
 BLECharacteristic analysisCharacteristic(UUID_ANALYSIS);
+BLECharacteristic rawCharacteristic(UUID_RAW);
 BLEBas            batteryService;   // standard Battery Service, 0x180F
 
 // Control commands from the app
@@ -99,7 +107,15 @@ static const uint8_t CMD_SET_EXERCISE = 0x01;   // payload: exercise id
 static const uint8_t CMD_RESET_COUNT  = 0x02;
 static const uint8_t CMD_REZERO       = 0x03;
 static const uint8_t CMD_ANALYZE      = 0x04;   // payload: token echoed back
-static const uint8_t CMD_SET_GRIP_LIFT = 0x05;  // payload: cm the stack rises when the handle is taken
+static const uint8_t CMD_SET_GRIP_LIFT = 0x05;  // ignored: older apps still send it
+static const uint8_t CMD_SET_SENSITIVITY = 0x06; // payload: 0 (strict) to 100 (lenient), 50 by default
+static const uint8_t CMD_SET_RAW_STREAM = 0x07;  // payload: 1 streams the raw accelerometer, 0 stops
+
+// Raw packet (developer mode), 20 bytes little endian, about 35 a second:
+//   0..1   uint16  sequence, +1 per packet: a gap means packets were lost
+//   2..19  3 samples of int16 x, y, z in accelerometer counts (0.122 mg),
+//          consecutive at 104 Hz, the same readings the counter uses
+static const uint8_t RAW_SAMPLES_PER_PACKET = 3;
 
 // Analysis packet, version 1, 8 bytes little endian:
 //   0     uint8   version (1)
@@ -170,6 +186,13 @@ const uint8_t EXERCISE_COUNT = sizeof(EXERCISE_PROFILES) / sizeof(EXERCISE_PROFI
 
 uint8_t currentExercise = 0;
 
+// How strict counting is, set live from the app (CMD_SET_SENSITIVITY). On
+// the stack it moves every threshold of the period counter (stack::tuningFor);
+// on the tilt profiles it scales the angles: 1.4x when strict, 1x at the
+// default, half when lenient.
+uint8_t sensitivity = stack::DEFAULT_SENSITIVITY;
+float tiltScale = 1.0f;
+
 // ---------------------------------------------------------------------------
 // Runtime state
 // ---------------------------------------------------------------------------
@@ -195,6 +218,15 @@ uint32_t ledOffAtMs = 0;
 
 // Weight stack (profile 2): live counter and recording of the set.
 stack::StackCounter stackCounter;
+
+void setSensitivity(uint8_t value) {
+  if (value > 100) value = 100;
+  sensitivity = value;
+  stackCounter.tuning = stack::tuningFor(value);
+  tiltScale = value < 50 ? 1.0f + 0.4f * (50 - value) / 50.0f
+                         : 1.0f - 0.5f * (value - 50) / 50.0f;
+}
+
 stack::SetRecorder setRecorder;          // 25 KB
 stack::Workspace analysisWorkspace;      // about 10 KB, used only at the end
 
@@ -243,6 +275,13 @@ bool readRegister(uint8_t registerAddress, uint8_t &valueOut) {
   return true;
 }
 
+// Developer mode (CMD_SET_RAW_STREAM): the readings go to the app as well.
+volatile bool rawStreaming = false;
+int16_t lastRaw[3];
+int16_t rawBuffer[RAW_SAMPLES_PER_PACKET * 3];
+uint8_t rawInPacket = 0;
+uint16_t rawSequence = 0;
+
 bool readAccel(float &ax, float &ay, float &az) {
   Wire1.beginTransmission(IMU_ADDR);
   Wire1.write(REG_OUTX_L_XL);
@@ -256,10 +295,30 @@ bool readAccel(float &ax, float &ay, float &az) {
   int16_t rawY = (int16_t)((buffer[3] << 8) | buffer[2]);
   int16_t rawZ = (int16_t)((buffer[5] << 8) | buffer[4]);
 
+  lastRaw[0] = rawX;
+  lastRaw[1] = rawY;
+  lastRaw[2] = rawZ;
   ax = rawX * ACCEL_G_PER_COUNT;
   ay = rawY * ACCEL_G_PER_COUNT;
   az = rawZ * ACCEL_G_PER_COUNT;
   return true;
+}
+
+/* Developer mode: three readings per notification, numbered so the app can
+   tell when some did not arrive (the radio drops them rather than block). */
+void streamRaw() {
+  for (uint8_t i = 0; i < 3; i++) rawBuffer[rawInPacket * 3 + i] = lastRaw[i];
+  if (++rawInPacket < RAW_SAMPLES_PER_PACKET) return;
+  rawInPacket = 0;
+  uint8_t payload[2 + RAW_SAMPLES_PER_PACKET * 6];
+  payload[0] = (uint8_t)(rawSequence & 0xFF);
+  payload[1] = (uint8_t)(rawSequence >> 8);
+  for (uint8_t i = 0; i < RAW_SAMPLES_PER_PACKET * 3; i++) {
+    payload[2 + 2 * i] = (uint8_t)(rawBuffer[i] & 0xFF);
+    payload[3 + 2 * i] = (uint8_t)((uint16_t)rawBuffer[i] >> 8);
+  }
+  rawSequence++;
+  rawCharacteristic.notify(payload, sizeof(payload));
 }
 
 bool configureImu() {
@@ -318,13 +377,21 @@ void setupBattery() {
   digitalWrite(VBAT_ENABLE, LOW);
   analogReference(AR_INTERNAL_2_4);
   analogReadResolution(12);
+  // The divider is a ~340 kΩ source (1 MΩ ∥ 510 kΩ). The core's default
+  // 3 µs acquisition is meant for 10 kΩ or less: the sampling capacitor does
+  // not settle, so the reading comes out low and changes from one
+  // measurement to the next. The nRF52840 needs 40 µs for up to 800 kΩ.
+  analogSampleTime(40);
 }
 
 float readBatteryVolts() {
-  // Averaging smooths out the noise the radio puts on the ADC.
+  // Averaging smooths out the noise the radio puts on the ADC. The first
+  // conversion is dropped: it starts from whatever the sampling capacitor
+  // held before.
+  analogRead(PIN_VBAT);
   uint32_t sum = 0;
-  for (uint8_t i = 0; i < 16; i++) sum += analogRead(PIN_VBAT);
-  return (sum / 16.0f) * ADC_FULL_SCALE_V / ADC_MAX * VBAT_DIVIDER;
+  for (uint8_t i = 0; i < 32; i++) sum += analogRead(PIN_VBAT);
+  return (sum / 32.0f) * ADC_FULL_SCALE_V / ADC_MAX * VBAT_DIVIDER;
 }
 
 uint8_t percentFromVolts(float volts) {
@@ -352,7 +419,10 @@ void updateBattery(uint32_t nowMs, bool force) {
   batteryPrimed = true;
 
   uint8_t percent = percentFromVolts(batteryVolts);
-  if (force || percent != batteryPercent) {
+  // The middle of the LiPo curve is flat (about 1 % per 3 mV), so a few mV
+  // of noise would flip the level back and forth. Publish only real changes.
+  int delta = (int)percent - (int)batteryPercent;
+  if (force || delta >= 2 || delta <= -2) {
     batteryPercent = percent;
     batteryService.write(percent);
     if (Bluefruit.connected()) batteryService.notify(percent);
@@ -405,10 +475,13 @@ void updateStack(float ax, float ay, float az, uint32_t nowMs) {
   float refNorm = sqrtf(referenceX * referenceX + referenceY * referenceY + referenceZ * referenceZ);
   if (refNorm < 0.5f) return;
 
-  // At rest the accelerometer reads +1 g pointing up, so the reference is the
-  // up direction. Subtracting its length leaves only the movement, with the
-  // bias along that axis already removed.
-  float vertical = (ax * referenceX + ay * referenceY + az * referenceZ) / refNorm - refNorm;
+  // The length of the reading minus its length at rest: 1 g plus the vertical
+  // acceleration, whichever way the sensor is turned. Projecting on the axis
+  // that was vertical at calibration instead lets gravity leak in as soon as
+  // the sensor tilts (15 mg at 10°): held in the hand, or slipped on the
+  // plate, the velocity drifted away and the count stayed at 0. Horizontal
+  // movement only adds its square, and a stack hardly has any.
+  float vertical = sqrtf(ax * ax + ay * ay + az * az) - refNorm;
 
   setRecorder.push(vertical);
   if (stackCounter.update(vertical, nowMs)) {
@@ -417,7 +490,7 @@ void updateStack(float ax, float ay, float az, uint32_t nowMs) {
     ledOffAtMs = nowMs + 120;
   }
 
-  inUpPhase = (stackCounter.phase == stack::StackCounter::LIFTING);
+  inUpPhase = stackCounter.lifting();
   currentAngleDeg = stackCounter.velocity * 100.0f;   // cm/s
 }
 
@@ -425,13 +498,13 @@ void updateCounter(uint32_t nowMs) {
   const ExerciseProfile &profile = EXERCISE_PROFILES[currentExercise];
 
   if (!inUpPhase) {
-    if (currentAngleDeg >= profile.enterAngleDeg) {
+    if (currentAngleDeg >= profile.enterAngleDeg * tiltScale) {
       inUpPhase = true;
     }
     return;
   }
 
-  if (currentAngleDeg <= profile.exitAngleDeg) {
+  if (currentAngleDeg <= profile.exitAngleDeg * tiltScale) {
     inUpPhase = false;
     // A rep is only counted on the way back, and only if enough time has
     // passed. Both guards exist because a single shake would otherwise cross
@@ -469,7 +542,7 @@ void analyzeSet(uint8_t token) {
     // Milliseconds of work for a full buffer. It consumes the recording,
     // which is fine: the set is closed.
     found = stack::analyzeSet(setRecorder.samples, setRecorder.length, analysisWorkspace,
-                              stackCounter.minRom);
+                              stackCounter.tuning);
     setRecorder.length = 0;
   }
 
@@ -513,13 +586,27 @@ void applyCommands() {
         analyzeSet(argument);
         break;
       case CMD_SET_GRIP_LIFT:
+        // The count follows the period of the curve now; there is no
+        // minimum travel to raise.
+        break;
+      case CMD_SET_SENSITIVITY:
         // Applies from the next sample, mid-set too; reset() keeps it.
-        stackCounter.minRom = stack::minRomForGrip(argument);
+        setSensitivity(argument);
+        break;
+      case CMD_SET_RAW_STREAM:
+        rawInPacket = 0;
+        rawStreaming = argument != 0;
         break;
       default:
         break;
     }
   }
+}
+
+void onDisconnect(uint16_t connectionHandle, uint8_t reason) {
+  (void)connectionHandle;
+  (void)reason;
+  rawStreaming = false;   // the next app asks again if it wants it
 }
 
 void onConnect(uint16_t connectionHandle) {
@@ -553,10 +640,14 @@ void publishState(uint32_t nowMs) {
 }
 
 void startBle() {
+  // Larger MTU and notification queue: developer mode streams about 35
+  // packets a second on top of the state.
+  Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
   Bluefruit.begin();
   Bluefruit.setTxPower(4);
   Bluefruit.setName("RepCounter");
   Bluefruit.Periph.setConnectCallback(onConnect);
+  Bluefruit.Periph.setDisconnectCallback(onDisconnect);
 
   repService.begin();
 
@@ -575,6 +666,11 @@ void startBle() {
   analysisCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
   analysisCharacteristic.setFixedLen(8);
   analysisCharacteristic.begin();
+
+  rawCharacteristic.setProperties(CHR_PROPS_NOTIFY);
+  rawCharacteristic.setPermission(SECMODE_OPEN, SECMODE_NO_ACCESS);
+  rawCharacteristic.setFixedLen(2 + RAW_SAMPLES_PER_PACKET * 6);
+  rawCharacteristic.begin();
 
   batteryService.begin();
 
@@ -630,6 +726,7 @@ void loop() {
   if (digitalRead(PIN_LSM6DS3TR_C_INT1) == HIGH) {
     float ax, ay, az;
     if (readAccel(ax, ay, az)) {
+      if (rawStreaming && Bluefruit.connected()) streamRaw();
       if (!filterPrimed) {
         gravityX = ax; gravityY = ay; gravityZ = az;
         filterPrimed = true;

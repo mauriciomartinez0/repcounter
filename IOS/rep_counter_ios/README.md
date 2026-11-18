@@ -85,6 +85,11 @@ lo muestra junto al indicador "SENSOR" mientras está conectado; a partir de
 - El porcentaje sale del voltaje con la curva de descarga de una LiPo, así que
   es una estimación. **Con el cable USB conectado marca cerca de 100 %**,
   porque mide el voltaje de carga, no el de la batería en reposo.
+- El divisor de la XIAO (1 MΩ / 510 kΩ) es una fuente de ~340 kΩ, así que el
+  ADC mide con 40 µs de adquisición (`analogSampleTime(40)`). Con los 3 µs que
+  trae el core por defecto la lectura salía baja y cambiaba bastante de una
+  conexión a otra. El porcentaje publicado solo cambia de 2 en 2 o más, porque
+  en la parte plana de la curva 3 mV ya son 1 %.
 - iOS guarda en caché los servicios de cada dispositivo. Si después de cargar
   el firmware nuevo no aparece la batería, olvida el sensor en Ajustes →
   Bluetooth o apaga y prende el Bluetooth.
@@ -99,22 +104,42 @@ velocidad vertical en lugar de inclinación. En el contador se ve hacia dónde v
 la pila y a qué velocidad, en vez de la barra de ángulo.
 
 - Si no se puede pegar arriba, sirve de costado en la placa superior (o en
-  cualquiera por encima del pasador): el algoritmo aprende la vertical al
-  calibrar, así que la orientación da igual. Lo que no tolera es que se
-  deslice: en simulación, hasta 2–3° no pasa nada y desde 4° pierde
-  repeticiones lentas. La ficha del ejercicio lo explica y el dibujo marca la
-  posición alternativa.
+  cualquiera por encima del pasador): la placa usa el largo de la
+  aceleración (1 g más la aceleración vertical), que no depende de cómo esté
+  girado el sensor. Por eso tampoco se desajusta si se desliza o queda
+  torcido, y se puede probar con el sensor en la mano, moviéndolo de arriba
+  abajo. Antes proyectaba sobre la vertical de la calibración: con 10° de
+  giro la gravedad se colaba (15 mg), la velocidad derivaba y el conteo se
+  quedaba en 0 aunque la curva mostrara las ondas. Lo que sí estorba es
+  mucho movimiento de lado y rápido (en simulación, 8 cm a 0,9 s por
+  repetición), que una pila no tiene.
 - La lista está en `tools/catalog/curated.py` (`SELECTOR_MACHINES`; las poleas
   entran todas) y llega al servidor con la migración 004.
 - Las máquinas de discos (prensa, hack, remo en T, remo alto, Smith, talones)
   no tienen pila y siguen como antes.
-- **Sube al agarrar**: en algunas máquinas la pila se levanta unos cm al
-  tomar el agarre, y soltarlo o reacomodarlo podía contar como repetición. En
-  el contador y en el descanso hay un control − / + con los cm que sube; la
-  placa (comando `0x05`) exige entonces ese recorrido + 2 cm para contar una
-  subida o bajada, nunca menos de 4 cm. Se guarda por ejercicio en el
-  teléfono y se vuelve a mandar al reconectar. Con un valor alto, las
-  repeticiones parciales más cortas que ese mínimo dejan de contar.
+- **Cuenta por el periodo de la curva.** La placa integra la velocidad a
+  altura (la misma onda que se ve en la gráfica del recorrido) y cada valle →
+  pico → valle es una onda. Cuentan las ondas que se repiten: la primera
+  espera a una segunda parecida (amplitud dentro de ~3×, periodo dentro de
+  2×) y entonces aparecen las dos; después, cada onda cuenta si su periodo
+  está entre un tercio y el triple del habitual y no es mucho más chica
+  (30 % de la habitual o 60 % de la anterior). Agarrar, soltar o reacomodar
+  el agarre hace ondas chicas que no se parecen a las de la serie, así que
+  no hay nada que configurar: el antiguo ajuste "Sube al agarrar" ya no
+  existe y la placa ignora su comando (`0x05`).
+- Una serie de una sola repetición no se cuenta en vivo (no hay periodo con
+  qué compararla). Agarrar y soltar varias veces seguidas sin hacer
+  repeticiones sí puede contar, porque esas ondas también se repiten.
+- **Sensibilidad**: en el contador y en el descanso hay un control deslizante,
+  de "Estricto" a "Flexible", que se puede mover en plena serie (comando
+  `0x06`, 0–100, 50 por defecto). En la pila mueve a la vez todos los umbrales
+  del conteo por periodo (`stack::tuningFor`): cuánto tiene que bajar la pila
+  para cerrar una onda, qué tan chica puede ser una repetición frente a las
+  demás, la onda mínima y el margen del periodo. En los ejercicios de
+  inclinación escala los ángulos de entrada y salida (×1,4 estricto, ×0,5
+  flexible). Se guarda por ejercicio en el teléfono y se vuelve a mandar al
+  reconectar. Más flexible cuenta repeticiones cortas o incompletas, y
+  también es más fácil que sume agarrar o soltar el agarre.
 - Los umbrales del perfil 2 se ajustaron con series simuladas
   (`rep_counter_ble/stack_sim.py`) y falta confirmarlos con series reales.
 
@@ -173,6 +198,41 @@ Eliminar la última serie elimina el entrenamiento.
 
 Necesita la API 1.4.0: con la anterior, las correcciones y los borrados no
 llegan al servidor.
+
+## Modo desarrollador
+
+Para revisar el conteo con series reales. Se activa en Ajustes →
+Desarrollador. Mientras está activo:
+
+- La app le pide a la placa el acelerómetro crudo (comando `0x07`,
+  característica `a1b20005`: 3 lecturas x y z por paquete, 104 Hz, con número
+  de secuencia para ver los paquetes perdidos) y graba cada serie desde la
+  calibración: el crudo, cada paquete de estado, los eventos (calibración,
+  cada repetición, sensibilidad, cierre, análisis) y los conteos.
+- Al terminar cada serie pregunta cuántas repeticiones se hicieron de verdad.
+- Cada serie es un JSON en `Documents/captures` (formato en
+  `Dev/DevCapture.swift`). El **panel desarrollador** (Ajustes → Panel
+  desarrollador) las lista con lo que contó la placa y lo real, y en cada una
+  muestra la aceleración, la velocidad que calculó la placa, su integral sin
+  corregir y el conteo en el tiempo, con una marca en cada repetición
+  contada. Se pueden compartir o borrar.
+
+En la computadora, con el iPhone conectado por USB (la app comparte
+Documentos: `UIFileSharingEnabled`):
+
+```bash
+cd rep_counter_ble/dev
+./pull_captures.sh                      # copia las capturas a ./captures
+python3 analyze_capture.py captures/*.json
+```
+
+`analyze_capture.py` cuenta las repeticiones a partir del crudo (doble
+integral por FFT en 0,15–3 Hz y picos claros), estima el periodo, corre el
+contador del firmware (`stack_sim.count`) con la magnitud y con la proyección
+a sensibilidad 0, 50 y 100, y deja un PNG por captura. `captures/` está en el
+`.gitignore`.
+
+Con firmware anterior no llegan datos crudos; el resto de la captura sí.
 
 ## Configuración
 

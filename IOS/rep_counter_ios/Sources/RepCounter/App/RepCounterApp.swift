@@ -187,6 +187,8 @@ struct RouteScreen: View {
             SummaryScreen(session: session, justFinished: justFinished, route: route)
         case .allSessions: AllSessionsScreen()
         case .progress(let exercise): ProgressScreen(exercise: exercise)
+        case .devPanel: DevPanelScreen()
+        case .devCapture(let id): DevCaptureScreen(captureId: id)
         }
     }
 }

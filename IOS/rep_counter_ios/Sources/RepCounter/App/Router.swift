@@ -37,6 +37,8 @@ enum Route: Hashable {
     case summary(WorkoutSession, justFinished: Bool)
     case allSessions
     case progress(Exercise)
+    case devPanel
+    case devCapture(String)
 }
 
 enum RootScreen { case loading, login, connection, home }
