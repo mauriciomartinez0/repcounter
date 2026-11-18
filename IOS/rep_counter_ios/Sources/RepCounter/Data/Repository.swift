@@ -5,8 +5,8 @@
 // the outbox and then pulls what changed on the server, in the order the API
 // expects (see rep_counter_api/README.md):
 //
-//   catalog → routines → sessions → favorites → pull routines → pull sessions
-//   → pull favorites
+//   catalog → routines → sessions (uploads, then corrections and deletions)
+//   → favorites → pull routines → pull sessions → pull favorites
 //
 // The API makes retries safe: ids are generated here and uploading the same
 // session twice stores it once. So a change only leaves the outbox when the
@@ -19,7 +19,8 @@ enum SyncStatus { case idle, syncing, offline, error }
 
 /// A change waiting to reach the server.
 private final class Op {
-    /// putRoutine, deleteRoutine, uploadSession, favorite.
+    /// putRoutine, deleteRoutine, uploadSession, editSession, deleteSession,
+    /// favorite.
     let type: String
     let id: String
     /// favorite: true to add, false to remove.
@@ -300,6 +301,36 @@ final class GymRepository {
         scheduleSync(immediately: true)
     }
 
+    /// A correction from Historial, sent with PUT after any pending upload.
+    /// Even when the upload is still queued: the server may already have the
+    /// session from an upload whose answer never arrived, and then the upload
+    /// comes back "duplicate" without the correction.
+    func editSession(_ session: WorkoutSession) {
+        guard userId != nil, let index = sessions.firstIndex(where: { $0.id == session.id }) else { return }
+        var edited = session
+        edited.editedAt = Date()
+        sessions[index] = edited
+        let id = session.id
+        enqueue(Op("editSession", id), replaces: { $0.type == "editSession" && $0.id == id })
+        saveSessions()
+        saveOutbox()
+        scheduleSync()
+    }
+
+    /// Deletes a session from Historial, on every phone.
+    func deleteSession(_ sessionId: String) {
+        guard userId != nil else { return }
+        sessions.removeAll { $0.id == sessionId }
+        // The upload may already be on its way, so the server is told even
+        // when it was still queued; deleting what it never got is harmless.
+        enqueue(Op("deleteSession", sessionId), replaces: {
+            ["uploadSession", "editSession", "deleteSession"].contains($0.type) && $0.id == sessionId
+        })
+        saveSessions()
+        saveOutbox()
+        scheduleSync()
+    }
+
     func toggleFavorite(_ exerciseId: String) {
         guard userId != nil else { return }
         let on = !favoriteIds.contains(exerciseId)
@@ -356,6 +387,7 @@ final class GymRepository {
             try check()
             try await pushRoutines(check)
             try await pushSessions(check)
+            try await pushSessionChanges(check)
             try await pushFavorites(check)
             try await pullRoutines(check)
             try await pullSessions(check)
@@ -496,6 +528,65 @@ final class GymRepository {
         }
     }
 
+    private func pushSessionChanges(_ check: () throws -> Void) async throws {
+        for op in outbox where op.type == "editSession" || op.type == "deleteSession" {
+            try check()
+            if op.type == "deleteSession" {
+                do {
+                    _ = try await api.delete("/sessions/\(op.id)")
+                } catch let error as ApiError where error.isPermanent {
+                    // Already gone: nothing to retry.
+                }
+                try check()
+                done(op)
+                continue
+            }
+            guard let local = sessions.first(where: { $0.id == op.id }) else {
+                done(op)
+                continue
+            }
+            do {
+                let response = try await api.put("/sessions/\(op.id)", body: [
+                    "sets": local.sets.map { $0.toJSON() },
+                    "editedAt": ISODate.string(local.editedAt ?? Date()),
+                ] as JSON)
+                try check()
+                let result = response.body as? JSON ?? [:]
+                if jsonBool(result["applied"]) == false, let remote = result["session"] as? JSON {
+                    // Another phone corrected it later: keep that version.
+                    replaceSession(try WorkoutSession(json: remote))
+                }
+            } catch let error as ApiError {
+                try check()
+                if error.status == 410 {
+                    // Deleted on another phone.
+                    sessions.removeAll { $0.id == op.id }
+                } else if error.status == 404 {
+                    // The upload was refused, and that was already reported.
+                } else if error.isPermanent {
+                    syncIssue = "No se pudo corregir el entrenamiento \"\(local.title)\": \(error.message)"
+                } else {
+                    throw error
+                }
+            }
+            done(op)
+            saveSessions()
+        }
+    }
+
+    private func replaceSession(_ session: WorkoutSession) {
+        var all = sessions.filter { $0.id != session.id }
+        all.append(session)
+        all.sort { $0.startedAt > $1.startedAt }
+        sessions = all
+    }
+
+    private func pendingSession(_ id: String) -> Bool {
+        outbox.contains {
+            ["uploadSession", "editSession", "deleteSession"].contains($0.type) && $0.id == id
+        }
+    }
+
     private func pushFavorites(_ check: () throws -> Void) async throws {
         for op in outbox where op.type == "favorite" {
             try check()
@@ -564,11 +655,19 @@ final class GymRepository {
             let response = try await api.get("/sessions/sync", query: ["since": since])
             try check()
             let body = try require(response.body as? JSON, "sessions")
-            let incoming = try (body["sessions"] as? [Any] ?? []).map {
-                try WorkoutSession(json: try require($0 as? JSON, "session"))
+            var incoming: [WorkoutSession] = []
+            var deleted: Set<String> = []
+            for case let raw as JSON in body["sessions"] as? [Any] ?? [] {
+                let id = jsonString(raw["id"]) ?? ""
+                if pendingSession(id) { continue } // Local change goes up first.
+                if raw["deletedAt"] != nil && !(raw["deletedAt"] is NSNull) {
+                    deleted.insert(id)
+                } else {
+                    incoming.append(try WorkoutSession(json: raw))
+                }
             }
-            if !incoming.isEmpty {
-                let ids = Set(incoming.map(\.id))
+            if !incoming.isEmpty || !deleted.isEmpty {
+                let ids = Set(incoming.map(\.id)).union(deleted)
                 var all = incoming + sessions.filter { !ids.contains($0.id) }
                 all.sort { $0.startedAt > $1.startedAt }
                 sessions = all

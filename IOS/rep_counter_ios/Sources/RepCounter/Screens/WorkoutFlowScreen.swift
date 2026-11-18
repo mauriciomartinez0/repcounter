@@ -570,6 +570,12 @@ private struct RestView: View {
                     .padding(.top, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
+            if let trace = last?.trace {
+                // The set just done, one wave per rep. The big clock above
+                // shrinks to make room.
+                TraceChart(trace: trace, height: 44)
+                    .padding(.top, 14)
+            }
             HStack {
                 AppLabel("Peso usado").frame(maxWidth: .infinity, alignment: .leading)
                 WeightStepper(valueKg: last?.weightKg, large: false) { workout.setLastWeight($0) }

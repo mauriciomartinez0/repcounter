@@ -48,7 +48,7 @@ arrancar. Para cambiar el esquema se agrega un archivo nuevo
 | `exercises`, `tutorial_steps` | catálogo, administrado por el equipo |
 | `favorites` | favoritos de cada usuario |
 | `routines`, `routine_items` | rutinas; las borradas quedan como "lápida" |
-| `workout_sessions`, `set_records` | historial; inmutable una vez subido |
+| `workout_sessions`, `set_records` | historial; se corrige y se borra desde la app (las borradas quedan como "lápida"), cada serie con su curva (`trace`) |
 
 ## Catálogo de ejercicios
 
@@ -74,7 +74,12 @@ teléfono y lo sube cuando puede. La API está hecha para que eso sea seguro:
    posterior, responde `"applied": false` con esa versión, y la app reemplaza
    la suya.
 4. **Los borrados se propagan.** `DELETE` deja una lápida; los otros teléfonos
-   la reciben con `deletedAt` en `GET /routines?since=...`.
+   la reciben con `deletedAt` en `GET /routines?since=...` (rutinas) o en
+   `GET /sessions/sync?since=...` (sesiones, sin series).
+5. **Las sesiones se corrigen igual que las rutinas.** `PUT /sessions/{id}`
+   reemplaza sus series y gana la edición posterior (`editedAt`). Una sesión
+   se sube primero con `POST /sessions/batch`; el `PUT` es solo para las que
+   el servidor ya tiene.
 
 Orden de cada sincronización:
 
@@ -83,6 +88,8 @@ Orden de cada sincronización:
 2. PUT  /routines/{id}        por cada rutina pendiente
    DELETE /routines/{id}      por cada borrado pendiente
 3. POST /sessions/batch       la cola de sesiones, hasta 50 por envío
+   PUT  /sessions/{id}        por cada sesión corregida desde el historial
+   DELETE /sessions/{id}      por cada sesión borrada
 4. GET  /routines?since=T1    cambios hechos en otros teléfonos
 5. GET  /sessions/sync?since=T2  (repetir mientras hasMore)
    Guardar serverTime de 4 y 5 como T1 y T2 para la próxima vez.
@@ -126,7 +133,7 @@ Qué hacer con cada respuesta:
 - **Errores de red con Google:** si no se pueden descargar los certificados de
   Google, `/auth/google` responde 500 en vez de un 503 claro.
 - **Sincronización de sesiones con muchas al mismo tiempo:** `GET
-  /sessions/sync` pagina por hora de llegada; si más de 200 sesiones llegaran
+  /sessions/sync` pagina por hora del último cambio; si más de 200 sesiones cambiaran
   en el mismo instante, la paginación no avanzaría. Con lotes de 50 no pasa,
   pero conviene pasar a un cursor (hora + id) como en `GET /sessions`.
 

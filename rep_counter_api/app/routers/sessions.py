@@ -9,7 +9,9 @@ están guardadas. Por eso:
 - Subir un id que ya existe no vuelve a guardar nada: responde "duplicate"
   con la versión guardada, y el teléfono la saca de la cola igual que con
   "created".
-- Las sesiones no se editan después de subidas, así que no hay conflictos.
+- Desde el historial se pueden corregir (PUT, gana la edición posterior,
+  como en las rutinas) y borrar (DELETE deja una "lápida" para que el borrado
+  llegue a los demás teléfonos por la sincronización).
 """
 
 import base64
@@ -19,6 +21,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Query, Response, status
 from psycopg import AsyncConnection, errors
+from psycopg.types.json import Jsonb
 from pydantic import ValidationError
 
 from app.config import get_settings
@@ -31,9 +34,11 @@ from app.schemas import (
     SessionBatchItem,
     SessionBatchResult,
     SessionChanges,
+    SessionEdit,
     SessionIn,
     SessionPage,
     SessionUploadResult,
+    SessionWriteResult,
     SetRecord,
 )
 
@@ -50,7 +55,8 @@ SELECT s.*,
                    'exerciseId', r.exercise_id, 'setNumber', r.set_number,
                    'reps', r.reps, 'targetReps', r.target_reps,
                    'weightKg', r.weight_kg, 'meanVelocity', r.mean_velocity,
-                   'rangeDegrees', r.range_degrees, 'completedAt', r.completed_at)
+                   'rangeDegrees', r.range_degrees, 'completedAt', r.completed_at,
+                   'trace', r.trace)
                    ORDER BY r.position)
             FROM set_records r WHERE r.session_id = s.id),
          '[]') AS sets
@@ -68,6 +74,8 @@ def _session(row: dict) -> Session:
         ended_at=row["ended_at"],
         planned_exercises=row["planned_exercises"],
         received_at=row["received_at"],
+        edited_at=row["edited_at"],
+        deleted_at=row["deleted_at"],
         volume_kg=row["volume_kg"],
         sets=[SetRecord.model_validate(s) for s in row["sets"]],
     )
@@ -132,23 +140,28 @@ async def store_session(
             raise ApiError(409, "id_conflict", "Ese id ya está en uso. Genera otro.")
         return "duplicate", await _load_one(conn, body.id)
 
+    await _insert_sets(conn, body.id, body.sets)
+    return "created", await _load_one(conn, body.id)
+
+
+async def _insert_sets(conn: AsyncConnection, session_id: UUID, sets: list[SetRecord]) -> None:
     async with conn.cursor() as c:
         await c.executemany(
             """
             INSERT INTO set_records
               (session_id, position, exercise_id, set_number, reps, target_reps,
-               weight_kg, mean_velocity, range_degrees, completed_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               weight_kg, mean_velocity, range_degrees, completed_at, trace)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             [
                 (
-                    body.id, pos, s.exercise_id, s.set_number, s.reps, s.target_reps,
+                    session_id, pos, s.exercise_id, s.set_number, s.reps, s.target_reps,
                     s.weight_kg, s.mean_velocity, s.range_degrees, s.completed_at,
+                    Jsonb(s.trace.model_dump(by_alias=True)) if s.trace else None,
                 )
-                for pos, s in enumerate(body.sets, start=1)
+                for pos, s in enumerate(sets, start=1)
             ],
         )
-    return "created", await _load_one(conn, body.id)
 
 
 @router.post("", responses={200: {"description": "Ya existía (reintento)"}})
@@ -227,10 +240,10 @@ async def list_sessions(
 ) -> SessionPage:
     """Historial, de la más reciente a la más antigua, por páginas."""
     if cursor is None:
-        where, params = "s.user_id = %s", (user["id"],)
+        where, params = "s.user_id = %s AND s.deleted_at IS NULL", (user["id"],)
     else:
         started, sid = _decode_cursor(cursor)
-        where = "s.user_id = %s AND (s.started_at, s.id) < (%s, %s)"
+        where = "s.user_id = %s AND s.deleted_at IS NULL AND (s.started_at, s.id) < (%s, %s)"
         params = (user["id"], started, sid)
     cur = await conn.execute(
         _SELECT + f" WHERE {where} ORDER BY s.started_at DESC, s.id DESC LIMIT %s",
@@ -246,19 +259,20 @@ async def list_sessions(
 
 @router.get("/sync")
 async def sync_sessions(user: CurrentUser, conn: Conn, since: datetime) -> SessionChanges:
-    """Sesiones que llegaron al servidor desde `since`, por ejemplo las que
-    subió otro teléfono. Puede repetir alguna ya recibida; como el id es el
-    mismo, el teléfono simplemente la reemplaza."""
+    """Sesiones que cambiaron en el servidor desde `since`: las que subió otro
+    teléfono, las corregidas y las borradas (con `deletedAt` y sin series).
+    Puede repetir alguna ya recibida; como el id es el mismo, el teléfono
+    simplemente la reemplaza."""
     cur = await conn.execute("SELECT clock_timestamp() - interval '1 minute' AS t")
     server_time = (await cur.fetchone())["t"]
     cur = await conn.execute(
-        _SELECT + " WHERE s.user_id = %s AND s.received_at >= %s ORDER BY s.received_at LIMIT %s",
+        _SELECT + " WHERE s.user_id = %s AND s.updated_at >= %s ORDER BY s.updated_at LIMIT %s",
         (user["id"], since, SYNC_PAGE),
     )
     rows = await cur.fetchall()
     has_more = len(rows) == SYNC_PAGE
     if has_more:
-        server_time = rows[-1]["received_at"]
+        server_time = rows[-1]["updated_at"]
     return SessionChanges(
         sessions=[_session(r) for r in rows], server_time=server_time, has_more=has_more
     )
@@ -267,9 +281,61 @@ async def sync_sessions(user: CurrentUser, conn: Conn, since: datetime) -> Sessi
 @router.get("/{session_id}")
 async def get_session(session_id: UUID, user: CurrentUser, conn: Conn) -> Session:
     cur = await conn.execute(
-        _SELECT + " WHERE s.id = %s AND s.user_id = %s", (session_id, user["id"])
+        _SELECT + " WHERE s.id = %s AND s.user_id = %s AND s.deleted_at IS NULL",
+        (session_id, user["id"]),
     )
     row = await cur.fetchone()
     if row is None:
         raise ApiError(404, "session_not_found", "Esa sesión no existe.")
     return _session(row)
+
+
+@router.put("/{session_id}")
+async def edit_session(
+    session_id: UUID, body: SessionEdit, user: CurrentUser, conn: Conn
+) -> SessionWriteResult:
+    """Corrige una sesión ya subida: reemplaza todas sus series. Para dejarla
+    sin series, se borra con DELETE."""
+    if body.edited_at > datetime.now(UTC) + MAX_CLOCK_SKEW:
+        raise ApiError(422, "clock_skew", "La hora del teléfono no es correcta.")
+    await check_exercises(conn, {s.exercise_id for s in body.sets})
+
+    cur = await conn.execute(
+        "SELECT user_id, edited_at, deleted_at FROM workout_sessions WHERE id = %s FOR UPDATE",
+        (session_id,),
+    )
+    existing = await cur.fetchone()
+    if existing is None or existing["user_id"] != user["id"]:
+        raise ApiError(404, "session_not_found", "Esa sesión no existe.")
+    if existing["deleted_at"] is not None:
+        raise ApiError(410, "session_deleted", "Esa sesión se borró en otro dispositivo.")
+    if existing["edited_at"] is not None and existing["edited_at"] > body.edited_at:
+        # El servidor tiene una edición posterior: gana esa.
+        return SessionWriteResult(session=await _load_one(conn, session_id), applied=False)
+
+    await conn.execute(
+        "UPDATE workout_sessions SET edited_at = %s WHERE id = %s", (body.edited_at, session_id)
+    )
+    await conn.execute("DELETE FROM set_records WHERE session_id = %s", (session_id,))
+    await _insert_sets(conn, session_id, body.sets)
+    return SessionWriteResult(session=await _load_one(conn, session_id), applied=True)
+
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session(session_id: UUID, user: CurrentUser, conn: Conn) -> None:
+    """Idempotente. Si la sesión nunca llegó al servidor, también responde 204.
+    Sus series se borran, así que deja de contar en el progreso."""
+    await conn.execute(
+        """
+        UPDATE workout_sessions SET deleted_at = now()
+         WHERE id = %s AND user_id = %s AND deleted_at IS NULL
+        """,
+        (session_id, user["id"]),
+    )
+    await conn.execute(
+        """
+        DELETE FROM set_records r USING workout_sessions s
+         WHERE r.session_id = s.id AND s.id = %s AND s.user_id = %s
+        """,
+        (session_id, user["id"]),
+    )

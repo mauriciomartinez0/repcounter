@@ -24,7 +24,7 @@ Sources/RepCounter/
   API/        ApiClient: tokens en el Keychain, refresco automático
   Data/       modelos, catálogo semilla, repositorio con cola offline, sesión y ajustes
   Sensor/     SensorService: CoreBluetooth y un simulador
-  Workout/    WorkoutController: series, descanso, calibración
+  Workout/    WorkoutController: series, descanso, calibración; TraceRecorder: recorrido
   Theme/      colores, tipografía, íconos SVG, formato de números y fechas
   Widgets/    botones, campos, chips, gráfica, diálogos y hojas
   Screens/    todas las pantallas
@@ -141,6 +141,38 @@ conteo en vivo. El conteo nunca se corrige hacia abajo.
   sigue contando por inclinación, que en la pila no sirve.
 - Con el sensor simulado, en los ejercicios de pila a veces "se escapa" una
   repetición en vivo, para poder ver la pantalla de revisión sin la placa.
+
+## Recorrido de cada serie
+
+Mientras cuenta, la placa manda su estado unas 20 veces por segundo. La app
+graba esos paquetes durante la serie y guarda la curva (10 valores por
+segundo) junto con la serie:
+
+- **En la pila de pesas** el paquete trae la velocidad vertical. Integrada da
+  la altura de la placa, que sube y baja una vez por repetición, como una
+  onda seno. La integral deriva un poco, así que la curva se endereza para que
+  la serie termine a la altura en que empezó, y se corre para que el punto más
+  bajo sea 0 cm.
+- **En los demás ejercicios** es el ángulo que reporta la placa.
+
+La curva aparece en el descanso, justo después de la serie, y en la hoja de
+cada ejercicio del resumen (al tocarlo, también desde el historial). Las
+series grabadas antes de esto no la tienen. El código está en
+`Workout/TraceRecorder.swift` y `Widgets/TraceChart.swift`; viaja a la API en
+el campo `trace` de cada serie (migración 006).
+
+## Historial editable
+
+Desde el historial, tocar un ejercicio abre la misma hoja que al terminar el
+entrenamiento: se corrigen repeticiones y peso, o se eliminan series, y cada
+cambio se sube enseguida (`PUT /sessions/{id}`; si dos teléfonos corrigen la
+misma sesión sin conexión, gana la corrección posterior). "Eliminar
+entrenamiento", al final del resumen, la borra también en los demás teléfonos
+(`DELETE /sessions/{id}` deja una lápida que llega por la sincronización).
+Eliminar la última serie elimina el entrenamiento.
+
+Necesita la API 1.4.0: con la anterior, las correcciones y los borrados no
+llegan al servidor.
 
 ## Configuración
 

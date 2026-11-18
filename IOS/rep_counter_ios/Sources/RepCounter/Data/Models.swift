@@ -289,6 +289,37 @@ struct Routine: Hashable, Identifiable {
     }
 }
 
+/// The movement of one set, recorded from the board's packets: the height of
+/// the weight stack, or the angle of the limb or bar. Drawn on the summary.
+struct SetTrace: Hashable {
+    enum Kind: String {
+        /// Weight stack: height above where the set started, in cm.
+        case height
+        /// Any other exercise: the angle the board reports, in degrees.
+        case angle
+    }
+
+    let kind: Kind
+    let sampleHz: Int
+    let values: [Double]
+
+    var seconds: Double { Double(max(0, values.count - 1)) / Double(sampleHz) }
+
+    func toJSON() -> JSON { ["kind": kind.rawValue, "sampleHz": sampleHz, "values": values] }
+
+    init(kind: Kind, sampleHz: Int, values: [Double]) {
+        self.kind = kind
+        self.sampleHz = sampleHz
+        self.values = values
+    }
+
+    init(json j: JSON) throws {
+        kind = try require(Kind(rawValue: jsonString(j["kind"]) ?? ""), "kind")
+        sampleHz = try require(jsonInt(j["sampleHz"]), "sampleHz")
+        values = (j["values"] as? [Any] ?? []).compactMap(jsonDouble)
+    }
+}
+
 /// One finished set, as counted by the sensor.
 struct SetRecord: Hashable {
     let exerciseId: String
@@ -305,6 +336,9 @@ struct SetRecord: Hashable {
     var rangeDegrees: Double?
     let completedAt: Date
 
+    /// Nil for sets recorded before the app kept it.
+    var trace: SetTrace?
+
     var volumeKg: Double { (weightKg ?? 0) * Double(reps) }
 
     func toJSON() -> JSON {
@@ -317,11 +351,12 @@ struct SetRecord: Hashable {
             "meanVelocity": orNull(meanVelocity),
             "rangeDegrees": orNull(rangeDegrees),
             "completedAt": ISODate.string(completedAt),
+            "trace": orNull(trace?.toJSON()),
         ]
     }
 
     init(exerciseId: String, setNumber: Int, reps: Int, targetReps: Int?, weightKg: Double?,
-         meanVelocity: Double?, rangeDegrees: Double?, completedAt: Date) {
+         meanVelocity: Double?, rangeDegrees: Double?, completedAt: Date, trace: SetTrace? = nil) {
         self.exerciseId = exerciseId
         self.setNumber = setNumber
         self.reps = reps
@@ -330,6 +365,7 @@ struct SetRecord: Hashable {
         self.meanVelocity = meanVelocity
         self.rangeDegrees = rangeDegrees
         self.completedAt = completedAt
+        self.trace = trace
     }
 
     init(json j: JSON) throws {
@@ -341,6 +377,7 @@ struct SetRecord: Hashable {
         meanVelocity = jsonDouble(j["meanVelocity"])
         rangeDegrees = jsonDouble(j["rangeDegrees"])
         completedAt = try require(ISODate.parse(j["completedAt"]), "completedAt")
+        trace = try (j["trace"] as? JSON).map { try SetTrace(json: $0) }
     }
 }
 
@@ -357,6 +394,10 @@ struct WorkoutSession: Hashable, Identifiable {
     /// How many exercises the routine had, for "5 de 5 ejercicios".
     var plannedExercises = 0
 
+    /// Last correction from Historial. If two phones correct it offline, the
+    /// later one wins.
+    var editedAt: Date?
+
     var duration: TimeInterval { endedAt.timeIntervalSince(startedAt) }
 
     var volumeKg: Double { sets.reduce(0) { $0 + $1.volumeKg } }
@@ -371,7 +412,7 @@ struct WorkoutSession: Hashable, Identifiable {
     }
 
     func toJSON() -> JSON {
-        [
+        var j: JSON = [
             "id": id,
             "routineId": orNull(routineId),
             "title": title,
@@ -380,6 +421,8 @@ struct WorkoutSession: Hashable, Identifiable {
             "plannedExercises": plannedExercises,
             "sets": sets.map { $0.toJSON() },
         ]
+        if let editedAt { j["editedAt"] = ISODate.string(editedAt) }
+        return j
     }
 
     init(id: String, routineId: String?, title: String, startedAt: Date, endedAt: Date,
@@ -400,6 +443,7 @@ struct WorkoutSession: Hashable, Identifiable {
         startedAt = try require(ISODate.parse(j["startedAt"]), "startedAt")
         endedAt = try require(ISODate.parse(j["endedAt"]), "endedAt")
         plannedExercises = jsonInt(j["plannedExercises"]) ?? 0
+        editedAt = ISODate.parse(j["editedAt"])
         sets = try (try require(j["sets"] as? [Any], "sets")).map {
             try SetRecord(json: try require($0 as? JSON, "set"))
         }

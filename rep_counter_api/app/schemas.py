@@ -192,6 +192,16 @@ class RoutineChanges(Model):
 # --- Sesiones ---------------------------------------------------------------
 
 
+class SetTrace(Model):
+    """Curva de la serie, grabada por el teléfono con los paquetes de la placa."""
+
+    # "height": altura de la pila de pesas en cm. "angle": ángulo en grados.
+    kind: Literal["height", "angle"]
+    sample_hz: Annotated[int, Field(ge=1, le=50)]
+    # Diez minutos a 10 Hz como máximo.
+    values: Annotated[list[Annotated[float, Field(ge=-1000, le=1000)]], Field(max_length=6000)]
+
+
 class SetRecord(Model):
     exercise_id: ExerciseId
     set_number: Annotated[int, Field(ge=1, le=100)]
@@ -201,6 +211,7 @@ class SetRecord(Model):
     mean_velocity: Annotated[float, Field(ge=0, le=10)] | None = None
     range_degrees: Annotated[float, Field(ge=0, le=180)] | None = None
     completed_at: AwareDatetime
+    trace: SetTrace | None = None
 
 
 class SessionIn(Model):
@@ -229,8 +240,28 @@ class Session(Model):
     ended_at: datetime
     planned_exercises: int
     received_at: datetime
+    # Última corrección desde el historial; null si nunca se editó.
+    edited_at: datetime | None
+    # Solo en la sincronización: la sesión se borró y la app debe quitarla.
+    deleted_at: datetime | None
     volume_kg: float
     sets: list[SetRecord]
+
+
+class SessionEdit(Model):
+    """Corrección desde el historial: las series completas, como quedaron."""
+
+    sets: Annotated[list[SetRecord], Field(min_length=1, max_length=300)]
+    # Cuándo se editó en el teléfono. Si el servidor ya tiene una edición
+    # posterior, gana esa.
+    edited_at: AwareDatetime
+
+
+class SessionWriteResult(Model):
+    session: Session
+    # False si el servidor ya tenía una edición posterior y se quedó con ella;
+    # la app debe reemplazar su copia por `session`.
+    applied: bool
 
 
 class SessionUploadResult(Model):

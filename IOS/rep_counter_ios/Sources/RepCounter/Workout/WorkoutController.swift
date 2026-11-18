@@ -125,6 +125,8 @@ final class WorkoutController {
     @ObservationIgnored private var lastRepCount = 0
     @ObservationIgnored private var maxAngle = 0.0
     @ObservationIgnored private var velocities: [Double] = []
+    /// The movement of the current set, drawn on the summary.
+    @ObservationIgnored private var tracer = TraceRecorder()
     @ObservationIgnored private var sawUncalibrated = false
     @ObservationIgnored private let autoFinish = MainTimer()
     @ObservationIgnored private let calibrationFallback = MainTimer()
@@ -237,6 +239,7 @@ final class WorkoutController {
         lastRepCount = 0
         maxAngle = 0
         velocities.removeAll()
+        tracer.reset()
         autoFinish.cancel()
     }
 
@@ -255,6 +258,7 @@ final class WorkoutController {
             }
         case .counting:
             maxAngle = max(maxAngle, state.angleDegrees)
+            tracer.add(state.angleDegrees)
             if state.repCount > lastRepCount {
                 lastRepCount = state.repCount
                 if let v = state.lastRepVelocity { velocities.append(v) }
@@ -345,7 +349,8 @@ final class WorkoutController {
             meanVelocity: velocities.isEmpty ? nil : velocities.reduce(0, +) / Double(velocities.count),
             // On the stack the "angle" is a speed, not a range of motion.
             rangeDegrees: !onStack && maxAngle > 0 ? maxAngle : nil,
-            completedAt: Date()
+            completedAt: Date(),
+            trace: tracer.trace(onStack: onStack)
         ))
         restItemIndex = itemIndex
 

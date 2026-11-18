@@ -1,11 +1,13 @@
 // "Sesión completada". Also opened from Historial for past sessions.
 //
-// Right after a workout the sets can still be corrected: tapping an exercise
-// opens its sets, so the last set (which has no rest screen after it) can be
-// fixed too. Reps and weight can be changed and a set can be deleted, until
-// "Listo" uploads the session; after that it is read only. A set can come up short of the plan (12, 10, 9…) and the sensor
-// can also miss or double-count a rep; either way the history should hold
-// what was really done.
+// Tapping an exercise opens its sets, each with the movement the sensor
+// recorded, so the last set (which has no rest screen after it) can be fixed
+// too. Reps and weight can be changed and a set can be deleted. Right after a
+// workout the corrections go up with the session on "Listo"; from Historial
+// each one goes up as it is made, and the whole workout can be deleted. A set
+// can come up short of the plan (12, 10, 9…) and the sensor can also miss or
+// double-count a rep; either way the history should hold what was really
+// done.
 
 import SwiftUI
 
@@ -37,8 +39,30 @@ struct SummaryScreen: View {
                     s.exerciseId == exerciseId ? remaining.next() : s
                 }
                 session = updated
-                repo.saveSession(updated)
+                if justFinished {
+                    repo.saveSession(updated)
+                } else if updated.sets.isEmpty {
+                    // The last set went: the workout goes with it.
+                    repo.deleteSession(updated.id)
+                    Router.shared.pop()
+                    showMessage("Se eliminó el entrenamiento.")
+                } else {
+                    repo.editSession(updated)
+                }
             }
+        }
+    }
+
+    private func deleteWorkout() {
+        Task {
+            let sure = await confirm(
+                title: "¿Eliminar este entrenamiento?",
+                message: "Se quita del historial y del progreso, también en tus otros teléfonos.",
+                confirmLabel: "Eliminar"
+            )
+            guard sure else { return }
+            repo.deleteSession(session.id)
+            Router.shared.pop()
         }
     }
 
@@ -117,16 +141,21 @@ struct SummaryScreen: View {
                             name: name,
                             sets: session.sets.filter { $0.exerciseId == id },
                             last: i == exerciseIds.count - 1,
-                            onTap: justFinished ? { edit(id, name) } : nil
+                            onTap: { edit(id, name) }
                         )
                     }
-                    if justFinished {
-                        Spacer().frame(height: 16)
-                        Text(session.sets.isEmpty
-                            ? "Eliminaste todas las series: al tocar Listo no se guarda el entrenamiento."
-                            : "Toca un ejercicio para corregir repeticiones y peso, o eliminar series.")
-                            .font(.text(14))
-                            .foregroundStyle(c.ink3)
+                    Spacer().frame(height: 16)
+                    Text(justFinished && session.sets.isEmpty
+                        ? "Eliminaste todas las series: al tocar Listo no se guarda el entrenamiento."
+                        : session.sets.contains { $0.trace != nil }
+                        ? "Toca un ejercicio para ver el recorrido de cada serie, corregir repeticiones y peso, o eliminar series."
+                        : "Toca un ejercicio para corregir repeticiones y peso, o eliminar series.")
+                        .font(.text(14))
+                        .foregroundStyle(c.ink3)
+                    if !justFinished {
+                        Spacer().frame(height: 32)
+                        TextAction(label: "Eliminar entrenamiento", action: deleteWorkout)
+                            .frame(maxWidth: .infinity)
                     }
                 }
                 .padding(EdgeInsets(top: justFinished ? 40 : 8, leading: kGutter, bottom: 24, trailing: kGutter))
@@ -185,7 +214,7 @@ private struct SummaryExerciseRow: View {
     let name: String
     let sets: [SetRecord]
     let last: Bool
-    let onTap: (() -> Void)?
+    let onTap: () -> Void
     @Environment(\.colors) private var c
 
     var body: some View {
@@ -216,11 +245,7 @@ private struct SummaryExerciseRow: View {
         .frame(minHeight: 52)
         .bottomRule(c.line, visible: !last)
 
-        if let onTap {
-            Pressable(action: onTap, label: "Corregir \(name)") { row }
-        } else {
-            row
-        }
+        Pressable(action: onTap, label: "Ver y corregir \(name)") { row }
     }
 }
 
@@ -284,13 +309,15 @@ private struct SetsSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             Text(exerciseName).font(.text(22, .semibold)).foregroundStyle(c.ink)
             Spacer().frame(height: 4)
-            Text("Corrige las repeticiones y el peso de cada serie, o elimina las que sobran.")
+            Text(sets.contains { $0.trace != nil }
+                ? "El recorrido que grabó el sensor en cada serie. Corrige las repeticiones y el peso, o elimina las que sobran."
+                : "Corrige las repeticiones y el peso de cada serie, o elimina las que sobran.")
                 .font(.text(16))
                 .foregroundStyle(c.ink2)
             Spacer().frame(height: 12)
             // Short lists sit in the sheet as they are; long ones scroll.
-            if sets.count > 3 {
-                ScrollView { rows(sets) }.frame(height: 400)
+            if sets.count > 3 || (sets.count > 1 && sets.contains { $0.trace != nil }) {
+                ScrollView { rows(sets) }.frame(height: 440)
             } else {
                 rows(sets)
             }
@@ -339,6 +366,10 @@ private struct SetsSheet: View {
                         }
                         Spacer(minLength: 8)
                         TextAction(label: "Eliminar", size: 14, underline: true) { delete(at: i, in: sets) }
+                    }
+                    if let trace = s.trace {
+                        TraceChart(trace: trace, height: 64)
+                            .padding(.bottom, 4)
                     }
                     HStack(alignment: .bottom, spacing: 0) {
                         VStack(alignment: .leading, spacing: 4) {

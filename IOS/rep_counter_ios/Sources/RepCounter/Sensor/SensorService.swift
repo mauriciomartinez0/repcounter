@@ -587,7 +587,13 @@ final class SimulatedSensorDriver: SensorDriver {
         } else if up && angle < Self.threshold - 10 {
             up = false
         }
-        publish(angle)
+        if exerciseId == kStackProfile {
+            // Like the board: the stack's vertical speed in cm/s, for a plate
+            // that rises 30 cm per rep.
+            publish(15 * 2 * .pi / Self.repSeconds * sin(2 * .pi * phase))
+        } else {
+            publish(angle)
+        }
     }
 
     var supportsSetAnalysis: Bool { true }

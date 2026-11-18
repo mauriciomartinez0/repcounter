@@ -136,3 +136,89 @@ def test_deleting_the_account_removes_its_data(client):
     client.post("/sessions", headers=h, json=session)
     client.request("DELETE", "/me", headers=h, json={"password": "12345678"})
     assert count_rows(session["id"]) == (0, 0)
+
+
+def test_edit_from_history_and_last_edit_wins(client, user):
+    s = make_session()
+    client.post("/sessions", headers=user, json=s)
+    since = (now() - timedelta(seconds=5)).isoformat()
+
+    fixed = [dict(s["sets"][0], reps=6)]
+    r = client.put(f"/sessions/{s['id']}", headers=user,
+                   json={"sets": fixed, "editedAt": now().isoformat()})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["applied"] is True
+    assert [x["reps"] for x in body["session"]["sets"]] == [6]
+    assert body["session"]["editedAt"] is not None
+    assert count_rows(s["id"]) == (1, 1)
+
+    # Una edición más vieja (otro teléfono sin conexión) no pisa la nueva.
+    old = client.put(f"/sessions/{s['id']}", headers=user,
+                     json={"sets": s["sets"], "editedAt": (now() - timedelta(hours=1)).isoformat()})
+    assert old.json()["applied"] is False
+    assert len(old.json()["session"]["sets"]) == 1
+
+    # Los otros teléfonos reciben la corrección.
+    sync = client.get("/sessions/sync", headers=user, params={"since": since}).json()
+    assert [len(x["sets"]) for x in sync["sessions"] if x["id"] == s["id"]] == [1]
+
+    # Sin series no se edita: eso es borrar.
+    empty = client.put(f"/sessions/{s['id']}", headers=user, json={"sets": [], "editedAt": now().isoformat()})
+    assert empty.status_code == 422
+
+
+def test_edit_needs_an_uploaded_session_of_the_same_user(client, user):
+    s = make_session()
+    r = client.put(f"/sessions/{s['id']}", headers=user,
+                   json={"sets": s["sets"], "editedAt": now().isoformat()})
+    assert r.status_code == 404
+
+    client.post("/sessions", headers=user, json=s)
+    other = auth(register(client, email="otro@correo.com"))
+    r = client.put(f"/sessions/{s['id']}", headers=other,
+                   json={"sets": s["sets"], "editedAt": now().isoformat()})
+    assert r.status_code == 404
+    assert client.delete(f"/sessions/{s['id']}", headers=other).status_code == 204
+    assert count_rows(s["id"]) == (1, 2)
+
+
+def test_delete_from_history(client, user):
+    s = make_session()
+    client.post("/sessions", headers=user, json=s)
+    since = (now() - timedelta(seconds=5)).isoformat()
+
+    assert client.delete(f"/sessions/{s['id']}", headers=user).status_code == 204
+    assert client.delete(f"/sessions/{s['id']}", headers=user).status_code == 204
+    assert count_rows(s["id"]) == (1, 0)  # lápida, sin series
+
+    assert client.get("/sessions", headers=user).json()["sessions"] == []
+    assert client.get(f"/sessions/{s['id']}", headers=user).status_code == 404
+    sync = client.get("/sessions/sync", headers=user, params={"since": since}).json()
+    gone = [x for x in sync["sessions"] if x["id"] == s["id"]]
+    assert gone and gone[0]["deletedAt"] is not None and gone[0]["sets"] == []
+
+    # Ya no cuenta en el progreso ni se puede editar.
+    p = client.get("/exercises/bench-press/progress", headers=user, params={"metric": "weight"}).json()
+    assert p["points"] == []
+    r = client.put(f"/sessions/{s['id']}", headers=user,
+                   json={"sets": s["sets"], "editedAt": now().isoformat()})
+    assert r.status_code == 410
+    # Un reintento de la subida no la revive.
+    assert client.post("/sessions", headers=user, json=s).json()["status"] == "duplicate"
+    assert count_rows(s["id"]) == (1, 0)
+
+
+def test_set_trace_round_trip(client, user):
+    trace = {"kind": "height", "sampleHz": 10, "values": [0, 4.5, 12, 18.5, 12, 4, 0]}
+    s = make_session()
+    s["sets"][0]["trace"] = trace
+    client.post("/sessions", headers=user, json=s)
+    got = client.get(f"/sessions/{s['id']}", headers=user).json()
+    assert got["sets"][0]["trace"] == trace
+    assert got["sets"][1]["trace"] is None
+
+    bad = make_session()
+    bad["sets"][0]["trace"] = {"kind": "height", "sampleHz": 10, "values": [5000]}
+    r = client.post("/sessions/batch", headers=user, json={"sessions": [bad]})
+    assert r.json()["results"][0]["status"] == "rejected"
