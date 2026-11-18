@@ -135,10 +135,9 @@ la pila y a qué velocidad, en vez de la barra de ángulo.
   `0x06`, 0–100, 50 por defecto). En la pila mueve a la vez todos los umbrales
   del conteo por periodo (`stack::tuningFor`): cuánto tiene que bajar la pila
   para cerrar una onda, qué tan chica puede ser una repetición frente a las
-  demás, la onda mínima y el margen del periodo. En los ejercicios de
-  inclinación escala los ángulos de entrada y salida (×1,4 estricto, ×0,5
-  flexible). Se guarda por ejercicio en el teléfono y se vuelve a mandar al
-  reconectar. Más flexible cuenta repeticiones cortas o incompletas, y
+  demás, la onda mínima y el margen del periodo; en los ejercicios de
+  inclinación, los mismos umbrales en grados. Se guarda por ejercicio en el
+  teléfono y se vuelve a mandar al reconectar. Más flexible cuenta repeticiones cortas o incompletas, y
   también es más fácil que sume agarrar o soltar el agarre.
 - Los umbrales del perfil 2 se ajustaron con series simuladas
   (`rep_counter_ble/stack_sim.py`) y falta confirmarlos con series reales.
@@ -166,6 +165,17 @@ conteo en vivo. El conteo nunca se corrige hacia abajo.
   sigue contando por inclinación, que en la pila no sirve.
 - Con el sensor simulado, en los ejercicios de pila a veces "se escapa" una
   repetición en vivo, para poder ver la pantalla de revisión sin la placa.
+
+## Ejercicios de inclinación
+
+Con el sensor en el brazo, el cuerpo o una barra (perfiles 0 y 1), la placa
+mide el ángulo respecto de la pose en que calibró y cuenta igual que en la
+pila, por el periodo de la curva (`stack::TiltCounter`): cada subida y bajada
+del ángulo parecida a las demás es una repetición. Antes había que pasar 25°
+al subir y volver por debajo de 12° (45° / 20° en el cuerpo); en las primeras
+capturas del modo desarrollador, unas elevaciones laterales que entre
+repeticiones se quedaban a 15–25° de la pose inicial contaron 5 de 12 y 2 de
+10. Con el conteo por periodo, las mismas capturas dan 12 y 10.
 
 ## Recorrido de cada serie
 

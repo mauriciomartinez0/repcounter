@@ -7,6 +7,7 @@
 // Prints "file passA passB". With -l, also the live counter over the
 // recording, with the reference from its first second: "file passA passB live".
 // -s: the app's sensitivity, 0–100 (50 by default).
+// -t file.txt: tilt counter over "ms angle" lines instead; prints the count.
 
 #include <cstdio>
 #include <cstdlib>
@@ -24,6 +25,21 @@ int main(int argc, char **argv) {
   if (argc > k + 1 && strcmp(argv[k], "-s") == 0) {
     tuning = stack::tuningFor((uint8_t)atoi(argv[k + 1]));
     k += 2;
+  }
+  uint8_t sensitivity = 50;
+  for (int i = 1; i + 1 < argc; i++)
+    if (strcmp(argv[i], "-s") == 0) sensitivity = (uint8_t)atoi(argv[i + 1]);
+  if (argc > k + 1 && strcmp(argv[k], "-t") == 0) {
+    FILE *f = fopen(argv[k + 1], "r");
+    if (!f) { printf("ERROR\n"); return 1; }
+    stack::TiltCounter tilt;
+    tilt.tuning = stack::tiltTuningFor(sensitivity);
+    unsigned long ms;
+    float angle;
+    while (fscanf(f, "%lu %f", &ms, &angle) == 2) tilt.update(angle, (uint32_t)ms);
+    fclose(f);
+    printf("%u\n", tilt.reps);
+    return 0;
   }
   if (argc > k && strcmp(argv[k], "-l") == 0) {
     live = true;

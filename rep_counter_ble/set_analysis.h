@@ -64,7 +64,7 @@ struct Tuning {
 //                                 turn   minAmp  simA  simP  ampF  fadeF  perMin      perMax settled
 static const Tuning TUNING_STRICT  = { 0.03f, 0.05f,  0.5f, 0.6f, 0.5f, 0.8f,  0.5f,       2.0f, 0.8f };
 static const Tuning TUNING_DEFAULT = { 0.02f, 0.03f, 0.35f, 0.5f, 0.3f, 0.6f,  1.0f / 3,   3.0f, 0.5f };
-static const Tuning TUNING_LENIENT = { 0.01f, 0.015f, 0.2f, 0.35f, 0.1f, 0.3f, 0.2f,       5.0f, 0.25f };
+static const Tuning TUNING_LENIENT = { 0.01f, 0.015f, 0.2f, 0.35f, 0.15f, 0.3f, 0.3f,      5.0f, 0.25f };
 static const uint8_t DEFAULT_SENSITIVITY = 50;
 
 /* The thresholds for a sensitivity of 0–100. 50 gives the defaults exactly. */
@@ -231,6 +231,79 @@ struct StackCounter {
     // Turned at the bottom, or came to rest there: a full wave. A rest
     // higher up is a pause at the top, not the end of it.
     bool settled = still && nowMs - stillSinceMs >= SETTLE_MS &&
+                   peak - bottom >= tuning.settled * (peak - trough);
+    if (h >= bottom + tuning.turnM || settled) {
+      uint8_t added = waves.add((2.0f * peak - trough - bottom) / 2.0f,
+                                (arriveMs - departMs) / 1000.0f, tuning);
+      rising = true;
+      trough = bottom;
+      peak = h;
+      departMs = nowMs;
+      if (added) {
+        reps = waves.reps;
+        return true;
+      }
+    }
+    return false;
+  }
+};
+
+/* Tilt profiles (sensor on the arm, the body or a bar): the same waves, on
+   the angle from the calibration pose instead of the height. A wave closes
+   when the angle turns up again, or when it stays put near the bottom for
+   SETTLE_MS after coming at least `settled` of the way down: the arm does not
+   have to get back to the pose it calibrated in. Thresholds in degrees,
+   from the same sensitivity as the stack's (count_tilt in stack_sim.py). */
+static const float TILT_TURN_DEG_PER_M = 450.0f;   // 2 cm -> 9°
+static const float TILT_AMP_DEG_PER_M = 500.0f;    // 3 cm -> 15°
+
+inline Tuning tiltTuningFor(uint8_t sensitivity) {
+  Tuning t = tuningFor(sensitivity);
+  t.turnM *= TILT_TURN_DEG_PER_M;     // degrees here
+  t.minAmpM *= TILT_AMP_DEG_PER_M;
+  return t;
+}
+
+struct TiltCounter {
+  bool rising = true;
+  bool started = false;
+  float trough = 0.0f, peak = 0.0f, bottom = 0.0f;
+  uint32_t departMs = 0, arriveMs = 0, flatSinceMs = 0;
+  Periodic waves;
+  uint16_t reps = 0;
+  Tuning tuning = tiltTuningFor(DEFAULT_SENSITIVITY);   // setting, survives reset()
+
+  void reset() {
+    Tuning keep = tuning;
+    *this = TiltCounter();
+    tuning = keep;
+  }
+
+  bool lifting() const { return started && rising && peak > trough + tuning.turnM / 2; }
+
+  /* angle: degrees from the calibration pose. Returns true when this sample
+     added reps. */
+  bool update(float angle, uint32_t nowMs) {
+    const float h = angle;
+    if (!started) {
+      started = true;
+      trough = peak = bottom = h;
+      departMs = arriveMs = flatSinceMs = nowMs;
+    }
+    if (rising) {
+      if (h < trough) trough = h;
+      if (h <= trough + tuning.turnM / 2) { departMs = nowMs; peak = h; }
+      if (h > peak) peak = h;
+      if (h <= peak - tuning.turnM) {
+        rising = false;
+        bottom = h;
+        arriveMs = flatSinceMs = nowMs;
+      }
+      return false;
+    }
+    if (h < bottom) { bottom = h; arriveMs = nowMs; }
+    if (h > bottom + tuning.turnM / 2 || h < bottom - tuning.turnM / 2) flatSinceMs = nowMs;
+    bool settled = nowMs - flatSinceMs >= SETTLE_MS &&
                    peak - bottom >= tuning.settled * (peak - trough);
     if (h >= bottom + tuning.turnM || settled) {
       uint8_t added = waves.add((2.0f * peak - trough - bottom) / 2.0f,

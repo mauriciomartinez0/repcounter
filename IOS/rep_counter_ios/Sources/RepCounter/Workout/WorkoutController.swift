@@ -123,6 +123,9 @@ final class WorkoutController {
 
     // Live tracking of the current set.
     @ObservationIgnored private var lastRepCount = 0
+    /// After asking the board to reset, packets with the old count can still
+    /// arrive; they are ignored until it reports 0 (or a second passes).
+    @ObservationIgnored private var awaitingResetSince: Date?
     @ObservationIgnored private var maxAngle = 0.0
     @ObservationIgnored private var velocities: [Double] = []
     /// The movement of the current set, drawn on the summary.
@@ -270,10 +273,14 @@ final class WorkoutController {
                 // Change phase before resetting: the reset notifies right back.
                 phase = .counting
                 resetTracking()
-                sensor.resetCount()
+                resetBoardCount()
                 dev?.event("counting")
             }
         case .counting:
+            if let since = awaitingResetSince {
+                if state.repCount != 0 && Date().timeIntervalSince(since) < 1 { return }
+                awaitingResetSince = nil
+            }
             maxAngle = max(maxAngle, state.angleDegrees)
             tracer.add(state.angleDegrees)
             if state.repCount > lastRepCount {
@@ -296,8 +303,13 @@ final class WorkoutController {
     /// "Reiniciar": start the current set over.
     func restartSet() {
         resetTracking()
-        sensor.resetCount()
+        resetBoardCount()
         dev?.event("restart")
+    }
+
+    private func resetBoardCount() {
+        awaitingResetSince = Date()
+        sensor.resetCount()
     }
 
     private func devBegin() {
@@ -436,7 +448,7 @@ final class WorkoutController {
         if sameExercise {
             phase = .counting
             resetTracking()
-            sensor.resetCount()
+            resetBoardCount()
             devBegin()
             dev?.event("counting")
         } else {

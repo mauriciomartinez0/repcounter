@@ -34,9 +34,9 @@ TUNING = {
     "min_amp_m":      (0.05,  0.03,    0.015),  # smaller waves are noise, nudges, the landing bump
     "similar_amp":    (0.5,   0.35,    0.2),    # first two reps: amplitude ratio...
     "similar_period": (0.6,   0.5,     0.35),   # ...and period ratio
-    "amp_fraction":   (0.5,   0.3,     0.1),    # then: this much of the usual amplitude, or
+    "amp_fraction":   (0.5,   0.3,     0.15),   # then: this much of the usual amplitude, or
     "fade_fraction":  (0.8,   0.6,     0.3),    # this much of the last rep (a set to failure shrinks)...
-    "period_min":     (0.5,   1 / 3,   0.2),    # ...and a period within this of the usual one
+    "period_min":     (0.5,   1 / 3,   0.3),    # ...and a period within this of the usual one
     "period_max":     (2.0,   3.0,     5.0),
     "settled":        (0.8,   0.5,     0.25),   # resting counts as the bottom only this far down
 }
@@ -144,6 +144,52 @@ def count(acc_g, sensitivity=DEFAULT_SENSITIVITY):
             if h >= bottom + t["turn_m"] or settled:
                 # Turned at the bottom, or came to rest there: a full wave. A
                 # rest higher up is a pause at the top, not the end of it.
+                waves.add((2 * peak - trough - bottom) / 2, (arrive - depart) / 1000)
+                rising, trough, peak, depart = True, bottom, h, now
+    return waves.reps
+
+
+# Tilt profiles (sensor on the arm, the body or a bar): the same waves, on the
+# angle from the calibration pose instead of the height. The thresholds in
+# degrees follow the stack's from the same sensitivity.
+TILT_TURN_DEG_PER_M = 450      # 2 cm -> 9°
+TILT_AMP_DEG_PER_M = 500       # 3 cm -> 15°
+
+
+def tilt_tuning(sensitivity=DEFAULT_SENSITIVITY):
+    t = tuning(sensitivity)
+    t["turn_m"] *= TILT_TURN_DEG_PER_M
+    t["min_amp_m"] *= TILT_AMP_DEG_PER_M
+    return t
+
+
+def count_tilt(times_ms, angles_deg, sensitivity=DEFAULT_SENSITIVITY):
+    """The tilt counter (TiltCounter in set_analysis.h) over an angle series.
+    A wave closes when the angle turns up again, or when it stays put near
+    the bottom for SETTLE_MS after coming at least `settled` of the way down:
+    the arm does not have to get back to the calibration pose."""
+    t = tilt_tuning(sensitivity)
+    waves = Periodic(t)
+    rising = True
+    trough = peak = bottom = angles_deg[0]
+    depart = arrive = flat_since = times_ms[0]
+    for now, h in zip(times_ms, angles_deg):
+        if rising:
+            if h < trough:
+                trough = h
+            if h <= trough + t["turn_m"] / 2:
+                depart, peak = now, h
+            peak = max(peak, h)
+            if h <= peak - t["turn_m"]:
+                rising, bottom, arrive, flat_since = False, h, now, now
+        else:
+            if h < bottom:
+                bottom, arrive = h, now
+            if h > bottom + t["turn_m"] / 2 or h < bottom - t["turn_m"] / 2:
+                flat_since = now
+            settled = (now - flat_since >= SETTLE_MS
+                       and peak - bottom >= t["settled"] * (peak - trough))
+            if h >= bottom + t["turn_m"] or settled:
                 waves.add((2 * peak - trough - bottom) / 2, (arrive - depart) / 1000)
                 rising, trough, peak, depart = True, bottom, h, now
     return waves.reps

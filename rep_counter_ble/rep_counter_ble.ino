@@ -15,7 +15,9 @@
  *   1. Low-pass the accelerometer to estimate the gravity direction.
  *   2. Capture a reference direction once the device has been still.
  *   3. Track the angle between current gravity and that reference.
- *   4. Count with a hysteresis state machine plus a refractory period.
+ *   4. Count the waves of that angle that repeat (stack::TiltCounter): a
+ *      rep is a rise and a fall like the others, with no fixed angle to
+ *      reach or to come back under.
  *
  * The gyroscope is powered down: it contributes nothing here and costs power.
  *
@@ -169,29 +171,26 @@ enum ProfileKind : uint8_t {
 struct ExerciseProfile {
   const char *name;
   ProfileKind kind;
-  float enterAngleDeg;        // tilt: crossing up past this arms the rep
-  float exitAngleDeg;         // tilt: coming back below this completes it
-  uint32_t refractoryMs;      // ignore anything faster than this
 };
 
-// Two profiles, thresholds chosen for the expected range of motion. The gap
-// between enter and exit is the hysteresis that stops a wobble at the
-// threshold from counting several times.
+// Both tilt profiles count the same way, by the period of the angle curve
+// (stack::TiltCounter): there are no fixed angles to reach. Before, a rep
+// had to pass 25° up and come back under 12° (45° / 20° on the body); with
+// the sensor on the arm, a lateral raise that stopped 15–25° short of the
+// calibration pose between reps counted 5 of 12.
 const ExerciseProfile EXERCISE_PROFILES[] = {
-  { "push-up",      PROFILE_TILT,  25.0f, 12.0f, 500 },   // id 0: sensor on the upper arm
-  { "biceps curl",  PROFILE_TILT,  45.0f, 20.0f, 450 },   // id 1: sensor on the backpack
-  { "weight stack", PROFILE_STACK,  0.0f,  0.0f, 600 },   // id 2: sensor on the stack
+  { "arm",          PROFILE_TILT },    // id 0: sensor on the arm, or a bar
+  { "body",         PROFILE_TILT },    // id 1: sensor on the waist or a backpack
+  { "weight stack", PROFILE_STACK },   // id 2: sensor on the stack
 };
 const uint8_t EXERCISE_COUNT = sizeof(EXERCISE_PROFILES) / sizeof(EXERCISE_PROFILES[0]);
 
 uint8_t currentExercise = 0;
 
-// How strict counting is, set live from the app (CMD_SET_SENSITIVITY). On
-// the stack it moves every threshold of the period counter (stack::tuningFor);
-// on the tilt profiles it scales the angles: 1.4x when strict, 1x at the
-// default, half when lenient.
+// How strict counting is, set live from the app (CMD_SET_SENSITIVITY): it
+// moves every threshold of the period counters (stack::tuningFor, and in
+// degrees stack::tiltTuningFor).
 uint8_t sensitivity = stack::DEFAULT_SENSITIVITY;
-float tiltScale = 1.0f;
 
 // ---------------------------------------------------------------------------
 // Runtime state
@@ -205,7 +204,6 @@ bool  referenceCaptured = false;
 
 uint16_t repCount = 0;
 bool     inUpPhase = false;
-uint32_t lastRepMs = 0;
 
 float currentAngleDeg = 0.0f;
 
@@ -218,13 +216,14 @@ uint32_t ledOffAtMs = 0;
 
 // Weight stack (profile 2): live counter and recording of the set.
 stack::StackCounter stackCounter;
+// Tilt profiles (0 and 1).
+stack::TiltCounter tiltCounter;
 
 void setSensitivity(uint8_t value) {
   if (value > 100) value = 100;
   sensitivity = value;
   stackCounter.tuning = stack::tuningFor(value);
-  tiltScale = value < 50 ? 1.0f + 0.4f * (50 - value) / 50.0f
-                         : 1.0f - 0.5f * (value - 50) / 50.0f;
+  tiltCounter.tuning = stack::tiltTuningFor(value);
 }
 
 stack::SetRecorder setRecorder;          // 25 KB
@@ -436,8 +435,8 @@ void updateBattery(uint32_t nowMs, bool force) {
 void resetSession(bool alsoDropReference) {
   repCount = 0;
   inUpPhase = false;
-  lastRepMs = 0;
   stackCounter.reset();
+  tiltCounter.reset();
   if (alsoDropReference) {
     referenceCaptured = false;
     stillSinceMs = 0;
@@ -456,14 +455,6 @@ float angleFromReferenceDeg() {
   if (dot < -1.0f) dot = -1.0f;
 
   return acosf(dot) * 57.29578f;
-}
-
-void countRep(uint32_t nowMs, uint32_t refractoryMs) {
-  if (nowMs - lastRepMs < refractoryMs) return;
-  repCount++;
-  lastRepMs = nowMs;
-  digitalWrite(LED_BUILTIN, LOW);     // active low: LOW = on
-  ledOffAtMs = nowMs + 120;
 }
 
 /*
@@ -494,23 +485,14 @@ void updateStack(float ax, float ay, float az, uint32_t nowMs) {
   currentAngleDeg = stackCounter.velocity * 100.0f;   // cm/s
 }
 
+/* Tilt profiles: the waves of the angle from the calibration pose. */
 void updateCounter(uint32_t nowMs) {
-  const ExerciseProfile &profile = EXERCISE_PROFILES[currentExercise];
-
-  if (!inUpPhase) {
-    if (currentAngleDeg >= profile.enterAngleDeg * tiltScale) {
-      inUpPhase = true;
-    }
-    return;
+  if (tiltCounter.update(currentAngleDeg, nowMs)) {
+    repCount = tiltCounter.reps;
+    digitalWrite(LED_BUILTIN, LOW);     // active low: LOW = on
+    ledOffAtMs = nowMs + 120;
   }
-
-  if (currentAngleDeg <= profile.exitAngleDeg * tiltScale) {
-    inUpPhase = false;
-    // A rep is only counted on the way back, and only if enough time has
-    // passed. Both guards exist because a single shake would otherwise cross
-    // both thresholds and register as a rep.
-    countRep(nowMs, profile.refractoryMs);
-  }
+  inUpPhase = tiltCounter.lifting();
 }
 
 // ---------------------------------------------------------------------------
@@ -569,7 +551,7 @@ void applyCommands() {
       case CMD_SET_EXERCISE:
         if (argument < EXERCISE_COUNT) {
           currentExercise = argument;
-          resetSession(true);   // thresholds and resting pose both change
+          resetSession(true);   // counter and resting pose both change
           setRecorder.stop();
         }
         break;
