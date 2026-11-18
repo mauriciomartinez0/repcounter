@@ -161,8 +161,8 @@ private struct ItemRow: View {
     }
 }
 
-/// Create or edit a routine. Hold and drag to reorder, swipe left to
-/// remove, tap a value to change it.
+/// Create or edit a routine. Hold and drag to reorder, tap the cross or
+/// swipe left to remove, tap a value to change it.
 struct RoutineEditorScreen: View {
     /// Nil creates a new routine.
     let routine: Routine?
@@ -275,7 +275,11 @@ struct RoutineEditorScreen: View {
                     EditorRow(
                         name: repo.exercise(entry.item.exerciseId)?.name ?? entry.item.exerciseId,
                         item: entry.item,
-                        onChanged: { item in change { entry.item = item } }
+                        onChanged: { item in change { entry.item = item } },
+                        onRemove: {
+                            let id = entry.id
+                            change { entries.removeAll { $0.id == id } }
+                        }
                     )
                     .listRowInsets(EdgeInsets())
                     .listRowSeparator(.hidden)
@@ -324,6 +328,7 @@ private struct EditorRow: View {
     let name: String
     let item: RoutineItem
     let onChanged: (RoutineItem) -> Void
+    let onRemove: () -> Void
     @Environment(\.colors) private var c
 
     var body: some View {
@@ -332,10 +337,19 @@ private struct EditorRow: View {
                 .frame(width: 44, height: 64)
                 .accessibilityLabel("Mantén presionado y arrastra para reordenar: \(name)")
             VStack(alignment: .leading, spacing: 10) {
-                Text(name)
-                    .font(.text(17, .medium))
-                    .foregroundStyle(c.ink)
-                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    Text(name)
+                        .font(.text(17, .medium))
+                        .foregroundStyle(c.ink)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Pressable(action: onRemove, label: "Quitar \(name) de la rutina") {
+                        AppIcon(.close, size: 20, color: c.ink2)
+                            .frame(width: 44, height: 32)
+                    }
+                    .padding(.trailing, -12)
+                }
+                .frame(height: 24)
                 HStack(spacing: 8) {
                     Cell(label: "Series", value: "\(item.sets)") {
                         if let v = await askInt("Series", item.sets, min: 1, max: 20) {

@@ -7,8 +7,8 @@ def test_catalog_matches_the_app_seed(client):
     r = client.get("/exercises")
     assert r.status_code == 200
     exercises = {e["id"]: e for e in r.json()["exercises"]}
-    # 32 del catálogo inicial (002) + 159 del dataset (003).
-    assert len(exercises) == 191
+    # 32 del catálogo inicial (002) + 159 del dataset (003) + 1 (005).
+    assert len(exercises) == 192
     bench = exercises["bench-press"]
     assert bench["placement"] == "equipment"
     assert bench["tutorialSeconds"] == 48
@@ -23,6 +23,11 @@ def test_catalog_matches_the_app_seed(client):
         assert exercises[stack]["firmwareProfile"] == 2
         assert exercises[stack]["placement"] == "equipment"
     assert exercises["leg-press"]["firmwareProfile"] == 0   # de discos, sin pila
+    # 005 entra ya con la colocación de la 004.
+    one_arm = exercises["one-arm-cable-lateral-raise"]
+    assert one_arm["firmwareProfile"] == 2
+    assert one_arm["placement"] == "equipment"
+    assert len(one_arm["tutorialSteps"]) == 5
 
 
 def test_catalog_etag_and_304(client):

@@ -16,7 +16,7 @@ private enum IconElement {
 }
 
 enum AppIconKind: Hashable {
-    case back, forward, plus, minus, settings, dragHandle, check, play, pause
+    case back, forward, plus, minus, close, settings, dragHandle, check, play, pause
     case star, starOutline, arrowUp, arrowDown
     // Equipment type.
     case barbell, dumbbell, machine, bodyweight, cable
@@ -33,6 +33,7 @@ enum AppIconKind: Hashable {
         case .forward: [.path("M9 5l7 7-7 7")]
         case .plus: [.path("M12 5v14M5 12h14")]
         case .minus: [.path("M5 12h14")]
+        case .close: [.path("M6 6l12 12M18 6L6 18")]
         case .settings:
             [.path("M4 8h10M18 8h2M4 16h2M10 16h10"), .circle(16, 8, 2), .circle(8, 16, 2)]
         case .dragHandle: [.path("M5 9h14M5 15h14")]

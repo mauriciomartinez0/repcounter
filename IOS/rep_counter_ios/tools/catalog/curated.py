@@ -190,6 +190,12 @@ NEW = [
     ("0407", "db-side-bend", "Inclinación lateral con mancuerna", "core", "dumbbell", "body"),
 ]
 
+# Added after migrations 003 and 004 were applied in production. They go in
+# their own migration (005) so the applied ones are never rewritten.
+LATER = [
+    ("0192", "one-arm-cable-lateral-raise", "Elevaciones laterales a una mano en polea", "shoulders", "cable", None),
+]
+
 # Exercises that lift a weight stack: every cable exercise and the selector
 # machines (the load is chosen with a pin, no plates to change). The sensor
 # goes on the top plate of the stack and counts with firmware profile 2,

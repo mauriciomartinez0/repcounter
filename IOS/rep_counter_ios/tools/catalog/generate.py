@@ -3,6 +3,7 @@
 Outputs:
   - rep_counter_api/db/migrations/003_dataset_exercises.sql
   - rep_counter_api/db/migrations/004_weight_stack.sql
+  - rep_counter_api/db/migrations/005_more_exercises.sql (the LATER list)
   - rep_counter_ios/Sources/RepCounter/Resources/Catalog/catalog.json (seed)
   - rep_counter_ios/Sources/RepCounter/Resources/ExerciseImages/<id>.jpg
   - rep_counter_ios/Sources/RepCounter/Resources/ExercisePhotos/<id>-0.jpg, -1.jpg
@@ -21,7 +22,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from curated import EXISTING, NEW, SELECTOR_MACHINES, STACK_NOTE, STACK_PROFILE
+from curated import EXISTING, LATER, NEW, SELECTOR_MACHINES, STACK_NOTE, STACK_PROFILE
 from photos import PHOTOS
 
 HERE = Path(__file__).parent
@@ -92,7 +93,8 @@ for ex_id, pos, body in step_rows:
 ids = [e["id"] for e in current]
 names = [e["name"] for e in current]
 new_rows = []
-for ds_id, our_id, name, group, equipment, placement in NEW:
+later_rows = []
+for i, (ds_id, our_id, name, group, equipment, placement) in enumerate(NEW + LATER):
     assert ds_id in dataset, ds_id
     assert re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", our_id), our_id
     assert group in {"chest", "back", "legs", "shoulders", "arms", "core"}, our_id
@@ -100,17 +102,17 @@ for ds_id, our_id, name, group, equipment, placement in NEW:
     placement = placement or default_placement(equipment)
     ids.append(our_id)
     names.append(name)
-    new_rows.append(dict(
+    (new_rows if i < len(NEW) else later_rows).append(dict(
         id=our_id, name=name, muscleGroup=group, equipment=equipment, placement=placement,
         placementNote=note(our_id, equipment, placement),
         firmwareProfile=1 if placement == "body" else 0, tutorialSeconds=0, dataset=ds_id))
 dupes = {x for x in ids if ids.count(x) > 1} | {x for x in names if names.count(x) > 1}
 assert not dupes, dupes
-datasets_used = [EXISTING[e["id"]] for e in current] + [r["dataset"] for r in new_rows]
+datasets_used = [EXISTING[e["id"]] for e in current] + [r["dataset"] for r in new_rows + later_rows]
 assert len(set(datasets_used)) == len(datasets_used), "same image twice"
 for e in current:
     assert steps(EXISTING[e["id"]]), e["id"]
-for r in new_rows:
+for r in new_rows + later_rows:
     assert steps(r["dataset"]), r["id"]
 
 # --- Migration ------------------------------------------------------------------
@@ -207,6 +209,44 @@ UPDATE exercises
 );
 """)
 
+# --- Later additions (migration 005) ---------------------------------------------
+# Inserted already in their final state: a stack exercise gets the stack
+# placement right away instead of going through 004.
+
+later_stack = SELECTOR_MACHINES | {r["id"] for r in later_rows if r["equipment"] == "cable"}
+for r in later_rows:
+    if r["id"] in later_stack:
+        r.update(placement="equipment", placementNote=STACK_NOTE, firmwareProfile=STACK_PROFILE)
+    catalog.append(dict(
+        id=r["id"], name=r["name"], muscleGroup=r["muscleGroup"], equipment=r["equipment"],
+        placement=r["placement"], placementNote=r["placementNote"],
+        firmwareProfile=r["firmwareProfile"], thresholdDegrees=70,
+        tutorialSteps=steps(r["dataset"]), tutorialSeconds=0, videoUrl=None, active=True))
+
+later_values = [
+    f"  ({sql(r['id'])}, {sql(r['name'])}, '{r['muscleGroup']}', '{r['equipment']}', "
+    f"'{r['placement']}', {sql(r['placementNote'])}, {r['firmwareProfile']}, 0),"
+    for r in later_rows]
+later_steps = [
+    f"  ({sql(r['id'])}, {i}, {sql(s)}),"
+    for r in later_rows for i, s in enumerate(steps(r["dataset"]), 1)]
+later_values[-1] = later_values[-1].rstrip(",") + ";"
+later_steps[-1] = later_steps[-1].rstrip(",") + ";"
+(API / "db/migrations/005_more_exercises.sql").write_text("\n".join([
+    "-- Ejercicios agregados después de la 003 y la 004, del mismo dataset",
+    "-- (https://github.com/hasaneyldrm/exercises-dataset, MIT). Los de pila de",
+    "-- pesas entran ya con la colocación y el perfil 2 de la 004.",
+    "",
+    "INSERT INTO exercises",
+    "  (id, name, muscle_group, equipment, placement, placement_note, firmware_profile, tutorial_seconds)",
+    "VALUES",
+    *later_values,
+    "",
+    "INSERT INTO tutorial_steps (exercise_id, position, body)",
+    "VALUES",
+    *later_steps,
+]) + "\n")
+
 (IOS / "Catalog").mkdir(parents=True, exist_ok=True)
 (IOS / "Catalog" / "catalog.json").write_text(json.dumps(catalog, ensure_ascii=False, indent=1))
 
@@ -216,7 +256,7 @@ images = IOS / "ExerciseImages"
 if images.exists():
     shutil.rmtree(images)
 images.mkdir(parents=True)
-mapping = {e["id"]: EXISTING[e["id"]] for e in current} | {r["id"]: r["dataset"] for r in new_rows}
+mapping = {e["id"]: EXISTING[e["id"]] for e in current} | {r["id"]: r["dataset"] for r in new_rows + later_rows}
 animations = IOS / "ExerciseAnimations"
 if animations.exists():
     shutil.rmtree(animations)
@@ -252,7 +292,7 @@ for our_id, ds_id in mapping.items():
     else:
         shutil.copy(DATASET / dataset[ds_id]["gif_url"], animations / f"{our_id}.gif")
 
-print(f"actuales: {len(current)}, nuevos: {len(new_rows)}, total: {len(catalog)}, "
+print(f"actuales: {len(current)}, nuevos: {len(new_rows)} + {len(later_rows)} (005), total: {len(catalog)}, "
       f"pasos: {len(step_values)}, imágenes: {len(mapping)}, con fotos: {len(PHOTOS)}, "
       f"con animación: {len(mapping) - len(PHOTOS)}")
 from collections import Counter

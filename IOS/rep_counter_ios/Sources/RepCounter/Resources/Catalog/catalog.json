@@ -3970,5 +3970,25 @@
   "tutorialSeconds": 0,
   "videoUrl": null,
   "active": true
+ },
+ {
+  "id": "one-arm-cable-lateral-raise",
+  "name": "Elevaciones laterales a una mano en polea",
+  "muscleGroup": "shoulders",
+  "equipment": "cable",
+  "placement": "equipment",
+  "placementNote": "Encima de la pila de pesas, pegado a la placa superior.",
+  "firmwareProfile": 2,
+  "thresholdDegrees": 70,
+  "tutorialSteps": [
+   "Ponte de pie con los pies separados a la altura de los hombros, frente a la máquina de cable.",
+   "Sujeta la agarradera del cable con una mano, con la palma hacia abajo, y colócate lo suficientemente alejado de la máquina para que haya tensión en el cable.",
+   "Mantén el brazo recto y levántalo lentamente hacia el lado hasta que quede paralelo al suelo.",
+   "Haz una pausa breve en la parte más alta, luego baja lentamente el brazo de vuelta a la posición inicial.",
+   "Repite el número de repeticiones deseado, luego cambia de lado."
+  ],
+  "tutorialSeconds": 0,
+  "videoUrl": null,
+  "active": true
  }
 ]

@@ -37,7 +37,7 @@ sea fácil de llevar a la otra.
 
 ## Catálogo de ejercicios e imágenes
 
-191 ejercicios: los 32 originales más 159 elegidos del dataset abierto
+192 ejercicios: los 32 originales más 160 elegidos del dataset abierto
 [hasaneyldrm/exercises-dataset](https://github.com/hasaneyldrm/exercises-dataset),
 con nombre en español y los pasos del tutorial en el español que trae el
 dataset. Cada uno tiene su miniatura de 180×180 en
@@ -49,7 +49,7 @@ hacerlo":
   [free-exercise-db](https://github.com/yuhonas/free-exercise-db), que se
   alternan con un fundido: `Resources/ExercisePhotos/<id>-0.jpg` y `-1.jpg`,
   640 px de ancho, 15 MB en total. El mapeo está en `tools/catalog/photos.py`.
-- **Los otros 21**, sin equivalente fiel ahí, usan la animación del dataset
+- **Los otros 22**, sin equivalente fiel ahí, usan la animación del dataset
   (`Resources/ExerciseAnimations/<id>.gif`). Esa animación mide 180×180 y su
   licencia prohíbe distribuirla a más resolución, así que se muestra a 200 pt
   como máximo.
@@ -57,12 +57,14 @@ hacerlo":
 Todo va dentro de la app, así que funciona sin internet.
 
 - La lista curada está en `tools/catalog/curated.py`. `generate.py` (con la
-  ruta de un clon del dataset como argumento) regenera la migración
-  `rep_counter_api/db/migrations/003_dataset_exercises.sql`, el catálogo semilla
+  ruta de un clon del dataset como argumento) regenera las migraciones
+  `rep_counter_api/db/migrations/003_dataset_exercises.sql`, `004_weight_stack.sql`
+  y `005_more_exercises.sql`, el catálogo semilla
   `Resources/Catalog/catalog.json`, las miniaturas, las fotos y las
-  animaciones (descarga las fotos la primera vez). Para agregar más
-  ejercicios después, usa una migración nueva (`004_...`), no reescribas la 003
-  si ya se aplicó en producción.
+  animaciones (descarga las fotos la primera vez). La 003 y la 004 ya están
+  aplicadas en producción y salen idénticas: los ejercicios nuevos van en la
+  lista `LATER` de `curated.py`, que termina en la 005. Cuando la 005 también
+  esté aplicada, lo que siga necesita una 006.
 - **El catálogo lo manda la API.** La app lo reemplaza en cada sincronización,
   así que los ejercicios nuevos solo aparecen cuando la migración está aplicada
   en el servidor.
@@ -89,7 +91,7 @@ lo muestra junto al indicador "SENSOR" mientras está conectado; a partir de
 
 ## Sensor sobre la pila de pesas
 
-En los 29 ejercicios de polea y las 17 máquinas de selector (se cambia el
+En los 30 ejercicios de polea y las 17 máquinas de selector (se cambia el
 pasador, no discos: pec deck, jalones, extensión de piernas…) el sensor va
 encima de la pila, pegado a la placa superior. La pila sube y baja sin girar,
 así que esos ejercicios usan el perfil 2 del firmware, que cuenta por
@@ -199,8 +201,8 @@ xtool dev build      # solo compila
 Son pocas y vienen de la plataforma:
 
 - **Reordenar ejercicios en el editor de rutinas**: se mantiene presionada la
-  fila y se arrastra (en Flutter bastaba arrastrar desde el asa). Deslizar a la
-  izquierda para eliminar funciona igual.
+  fila y se arrastra (en Flutter bastaba arrastrar desde el asa). Para quitar
+  un ejercicio, además de deslizar a la izquierda, cada fila tiene una ✕.
 - **Bluetooth apagado o sin permiso**: iOS no deja encenderlo desde la app; la
   pantalla de conexión lo dice en vez de mostrar el error técnico.
 - Acceso con Google y recuperar contraseña siguen sin estar disponibles, igual
