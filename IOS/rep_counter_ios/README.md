@@ -190,6 +190,12 @@ segundo) junto con la serie:
   bajo sea 0 cm.
 - **En los demás ejercicios** es el ángulo que reporta la placa.
 
+Mientras se cuenta, la pantalla del contador muestra la curva en vivo: los
+últimos 10 segundos, con un punto donde está la pila (o el ángulo) ahora. En
+vivo la altura no se endereza (no hay final contra el cual hacerlo); en 10
+segundos la deriva es pequeña y la escala se ajusta a lo que hay en pantalla,
+con un mínimo de 10 cm o 20° para que la pila quieta no amplifique el ruido.
+
 La curva aparece en el descanso, justo después de la serie, y en la hoja de
 cada ejercicio del resumen (al tocarlo, también desde el historial). Las
 series grabadas antes de esto no la tienen. El código está en

@@ -130,6 +130,9 @@ final class WorkoutController {
     @ObservationIgnored private var velocities: [Double] = []
     /// The movement of the current set, drawn on the summary.
     @ObservationIgnored private var tracer = TraceRecorder()
+    /// The last seconds of the current set, drawn live on the counter.
+    private(set) var liveTrace: SetTrace?
+    static let liveTraceSeconds = 10.0
     @ObservationIgnored private var sawUncalibrated = false
     @ObservationIgnored private let autoFinish = MainTimer()
     @ObservationIgnored private let calibrationFallback = MainTimer()
@@ -259,6 +262,7 @@ final class WorkoutController {
         maxAngle = 0
         velocities.removeAll()
         tracer.reset()
+        liveTrace = nil
         autoFinish.cancel()
     }
 
@@ -283,6 +287,7 @@ final class WorkoutController {
             }
             maxAngle = max(maxAngle, state.angleDegrees)
             tracer.add(state.angleDegrees)
+            liveTrace = tracer.live(onStack: onStack, seconds: Self.liveTraceSeconds)
             if state.repCount > lastRepCount {
                 lastRepCount = state.repCount
                 dev?.event("rep", Double(state.repCount))

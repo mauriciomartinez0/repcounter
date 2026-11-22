@@ -234,10 +234,14 @@ private struct CounterView: View {
             if stack {
                 FirmwareCheckBanner(workout: workout)
                     .padding(.bottom, 12)
+                LiveTrace(workout: workout)
+                    .padding(.bottom, 16)
                 SensitivityControl(workout: workout)
                     .padding(.bottom, 20)
                 StackSpeed(cmPerSecond: sensor.state.angleDegrees)
             } else {
+                LiveTrace(workout: workout)
+                    .padding(.bottom, 16)
                 HStack(spacing: 8) {
                     AppIcon(rising ? .arrowUp : .arrowDown, size: 18, color: c.ink2, strokeWidth: 2)
                     Text(rising ? "SUBIENDO" : "BAJANDO")
@@ -301,6 +305,17 @@ private struct CounterView: View {
 
 /// Firmware profile that follows a weight stack (cable and selector machines).
 let kStackProfile = 2
+
+/// The last seconds of the set as it happens: the height of the stack, or
+/// the angle. One wave per rep, so a short or missed rep shows right away.
+private struct LiveTrace: View {
+    let workout: WorkoutController
+
+    var body: some View {
+        let empty = SetTrace(kind: workout.onStack ? .height : .angle, sampleHz: TraceRecorder.sampleHz, values: [])
+        TraceChart(trace: workout.liveTrace ?? empty, height: 64, liveSeconds: WorkoutController.liveTraceSeconds)
+    }
+}
 
 /// Warns when the exercise counts on the weight stack but the board stays on
 /// another profile: firmware older than profile 2 ignores the request and
