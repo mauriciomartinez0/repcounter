@@ -258,6 +258,18 @@ final class GymRepository {
         return saved
     }
 
+    /// Puts the routines in the order the user chose, on "Ordenar". The order
+    /// lives on this phone: the server keeps no position for routines, and the
+    /// sync puts updated routines back in their place and new ones at the end.
+    func reorderRoutines(_ ids: [String]) {
+        let byId = Dictionary(routines.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var ordered = ids.compactMap { byId[$0] }
+        // Anything that arrived meanwhile keeps its place at the end.
+        ordered += routines.filter { !ids.contains($0.id) }
+        routines = ordered
+        saveRoutines()
+    }
+
     func deleteRoutine(_ id: String) {
         routines.removeAll { $0.id == id }
         enqueue(Op("deleteRoutine", id), replaces: {
@@ -632,7 +644,12 @@ final class GymRepository {
             for r in routines where pendingRoutine(r.id) && !incomingIds.contains(r.id) {
                 merged.append(r)
             }
-            routines = merged
+            // Routines this phone already had keep the order chosen with
+            // "Ordenar"; the rest follow in the server's order.
+            let position = Dictionary(routines.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { a, _ in a })
+            routines = merged.enumerated().sorted { a, b in
+                (position[a.element.id] ?? Int.max, a.offset) < (position[b.element.id] ?? Int.max, b.offset)
+            }.map(\.element)
         } else {
             for r in incoming {
                 let id = jsonString(r["id"]) ?? ""

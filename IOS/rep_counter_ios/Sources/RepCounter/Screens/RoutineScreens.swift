@@ -15,12 +15,39 @@ func routineItemLine(_ item: RoutineItem) -> String {
 struct RoutinesTab: View {
     @Environment(GymRepository.self) private var repo
     @Environment(\.colors) private var c
+    /// "Ordenar": the list turns into one to move routines up and down.
+    @State private var ordering = false
 
     var body: some View {
         VStack(spacing: 0) {
             TabHeader(title: "Rutinas")
+            if ordering {
+                RoutineOrderList { ordering = false }
+            } else {
+                list
+            }
+        }
+        .onChange(of: repo.routines.count) { _, n in
+            if n < 2 { ordering = false }
+        }
+    }
+
+    private var list: some View {
+        VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
+                    if repo.routines.count > 1 {
+                        HStack {
+                            Spacer()
+                            Pressable(action: { ordering = true }, label: "Ordenar las rutinas") {
+                                HStack(spacing: 6) {
+                                    AppIcon(.dragHandle, size: 18, color: c.ink)
+                                    Text("Ordenar").font(.text(15, .semibold)).foregroundStyle(c.ink)
+                                }
+                                .frame(minHeight: 44)
+                            }
+                        }
+                    }
                     Rule()
                     if repo.routines.isEmpty && repo.lastSyncedAt == nil && repo.syncStatus != .idle {
                         Text(repo.syncStatus == .syncing
@@ -69,6 +96,83 @@ struct RoutinesTab: View {
                 .topRule(c.line)
             }
             .padding(.horizontal, kGutter)
+        }
+    }
+}
+
+/// The routines, to put in order: drag a row by its handle, or use the
+/// arrows. Every move is saved right away; "Listo" only closes.
+private struct RoutineOrderList: View {
+    let onDone: () -> Void
+    @Environment(GymRepository.self) private var repo
+    @Environment(\.colors) private var c
+
+    private func move(from: IndexSet, to: Int) {
+        var ids = repo.routines.map(\.id)
+        ids.move(fromOffsets: from, toOffset: to)
+        repo.reorderRoutines(ids)
+    }
+
+    private func step(_ index: Int, by delta: Int) {
+        let target = index + delta
+        guard repo.routines.indices.contains(target) else { return }
+        var ids = repo.routines.map(\.id)
+        ids.swapAt(index, target)
+        withAnimation(.easeOut(duration: 0.2)) { repo.reorderRoutines(ids) }
+        tick()
+    }
+
+    var body: some View {
+        let routines = repo.routines
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Arrastra desde ☰ o usa las flechas. La primera queda arriba.")
+                    .font(.text(14))
+                    .foregroundStyle(c.ink2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                TextAction(label: "Listo", colorKey: \.ink, weight: .semibold, action: onDone)
+            }
+            .padding(.horizontal, kGutter)
+            List {
+                ForEach(Array(routines.enumerated()), id: \.element.id) { i, routine in
+                    HStack(spacing: 4) {
+                        AppIcon(.dragHandle, color: c.ink2)
+                            .frame(width: 44, height: 72)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(routine.name)
+                                .font(.text(20, .medium))
+                                .foregroundStyle(c.ink)
+                                .lineLimit(1)
+                            Text(routineSubtitle(routine))
+                                .font(.text(14))
+                                .foregroundStyle(c.ink2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        arrow(.arrowUp, "Subir \(routine.name)", i > 0 ? { step(i, by: -1) } : nil)
+                        arrow(.arrowDown, "Bajar \(routine.name)",
+                              i < routines.count - 1 ? { step(i, by: 1) } : nil)
+                    }
+                    .padding(.trailing, kGutter - 8)
+                    .bottomRule(c.line)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(c.bg)
+                }
+                .onMove(perform: move)
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 0)
+        }
+    }
+
+    private func arrow(_ icon: AppIconKind, _ label: String, _ action: (() -> Void)?) -> some View {
+        Pressable(action: action, label: label) {
+            AppIcon(icon, size: 20, color: c.ink)
+                .frame(width: 44, height: 44)
+                .background(c.surface, in: RoundedRectangle(cornerRadius: kRadius))
+                .opacity(action == nil ? 0.3 : 1)
         }
     }
 }

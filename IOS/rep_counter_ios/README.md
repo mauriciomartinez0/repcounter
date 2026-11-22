@@ -196,6 +196,15 @@ series grabadas antes de esto no la tienen. El código está en
 `Workout/TraceRecorder.swift` y `Widgets/TraceChart.swift`; viaja a la API en
 el campo `trace` de cada serie (migración 006).
 
+## Orden de las rutinas
+
+"Ordenar", arriba de la lista de rutinas, la convierte en una lista para
+moverlas: se arrastran desde ☰ o se suben y bajan con las flechas, y cada
+movimiento se guarda al instante. El orden vive en el teléfono (la API no
+guarda posición de las rutinas): las que se editan mantienen su lugar y las
+nuevas, o las que llegan de otro teléfono, quedan al final. Al cerrar sesión
+se pierde junto con la copia local.
+
 ## Historial editable
 
 Desde el historial, tocar un ejercicio abre la misma hoja que al terminar el
