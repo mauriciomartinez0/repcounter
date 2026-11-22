@@ -187,8 +187,8 @@ struct TextAction: View {
     }
 }
 
-/// Field look shared by AppTextField and SearchField.
-private struct FieldBox: ViewModifier {
+/// Field look shared by AppTextField, SearchField and the number dialogs.
+struct FieldBox: ViewModifier {
     let focused: Bool
     @Environment(\.colors) private var c
 
@@ -556,20 +556,31 @@ struct WeightStepper: View {
                 { onChanged(v - step <= 0 ? nil : v - step) }
             })
             if large { Spacer(minLength: 0) }
-            Group {
-                if let value = valueKg {
-                    NumberWithUnit(value: formatKg(value), unit: "kg", size: large ? 80 : (compact ? 28 : 40),
-                                   unitSize: large ? 20 : (compact ? 13 : 15))
-                } else {
-                    Text("Corporal").font(.number(large ? 48 : (compact ? 22 : 30))).foregroundStyle(c.ink)
+            // Tapping the number types an exact weight (22,75 kg), which
+            // the 2,5 kg steps cannot reach.
+            Pressable(action: typeWeight, label: "Escribir el peso") {
+                Group {
+                    if let value = valueKg {
+                        NumberWithUnit(value: formatKg(value), unit: "kg", size: large ? 80 : (compact ? 28 : 40),
+                                       unitSize: large ? 20 : (compact ? 13 : 15))
+                    } else {
+                        Text("Corporal").font(.number(large ? 48 : (compact ? 22 : 30))).foregroundStyle(c.ink)
+                    }
                 }
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .underline(color: c.control)
+                .frame(width: large ? nil : (compact ? 84 : 108), height: box)
             }
-            .lineLimit(1)
-            .frame(width: large ? nil : (compact ? 84 : 108))
-            .minimumScaleFactor(0.5)
             if large { Spacer(minLength: 0) }
             stepButton(.plus, "Subir peso", box: box,
                        action: (valueKg ?? 0) + step <= Self.maxKg ? { onChanged((valueKg ?? 0) + step) } : nil)
+        }
+    }
+
+    private func typeWeight() {
+        Task {
+            if let entry = await askWeight(initial: valueKg, maxKg: Self.maxKg) { onChanged(entry.kg) }
         }
     }
 
@@ -599,13 +610,25 @@ struct CountStepper: View {
     var body: some View {
         HStack(spacing: 0) {
             button(.minus, "Quitar una de \(label)", value > min ? { onChanged(value - 1) } : nil)
-            Text("\(value)")
-                .font(.number(compact ? 28 : 40))
-                .foregroundStyle(c.ink)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-                .frame(width: compact ? 52 : 72)
+            Pressable(action: typeValue, label: "Escribir \(label)") {
+                Text("\(value)")
+                    .font(.number(compact ? 28 : 40))
+                    .foregroundStyle(c.ink)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .underline(color: c.control)
+                    .frame(width: compact ? 52 : 72, height: compact ? 44 : 56)
+            }
             button(.plus, "Sumar una de \(label)", value < max ? { onChanged(value + 1) } : nil)
+        }
+    }
+
+    private func typeValue() {
+        Task {
+            if let n = await askCount(title: label.prefix(1).uppercased() + label.dropFirst(),
+                                      initial: value, min: min, max: max) {
+                onChanged(n)
+            }
         }
     }
 

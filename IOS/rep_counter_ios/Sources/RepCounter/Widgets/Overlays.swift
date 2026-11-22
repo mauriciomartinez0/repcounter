@@ -187,3 +187,131 @@ struct OverlayHost: View {
         }
     }
 }
+
+// MARK: - Typed numbers
+
+/// What the weight dialog returns. Nil from `askWeight` means cancelled, so
+/// body weight needs its own case.
+enum WeightEntry {
+    case kg(Double)
+    case bodyweight
+
+    var kg: Double? {
+        if case .kg(let v) = self { return v }
+        return nil
+    }
+}
+
+/// "22,75" or "22.75" → 22.75. Nil when it is not a number.
+func parseDecimal(_ text: String) -> Double? {
+    let t = text.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ",", with: ".")
+    guard !t.isEmpty, let v = Double(t), v.isFinite else { return nil }
+    return v
+}
+
+/// Types an exact weight. Empty or 0 is body weight. Nil if cancelled.
+@MainActor
+func askWeight(initial: Double?, maxKg: Double) async -> WeightEntry? {
+    await OverlayCenter.shared.dialog { finish in
+        AnyView(NumberDialog(
+            title: "Peso",
+            unit: "kg",
+            initial: initial.map(formatKg) ?? "",
+            hint: "Corporal",
+            note: "Déjalo vacío para peso corporal.",
+            keyboard: .decimalPad,
+            validate: { text in
+                if text.trimmingCharacters(in: .whitespaces).isEmpty { return .success(WeightEntry.bodyweight) }
+                guard let v = parseDecimal(text), v >= 0 else { return .failure("Escribe un número, por ejemplo 22,5.") }
+                if v == 0 { return .success(WeightEntry.bodyweight) }
+                if v > maxKg { return .failure("El máximo es \(formatKg(maxKg)) kg.") }
+                // Two decimals is finer than any plate.
+                return .success(WeightEntry.kg((v * 100).rounded() / 100))
+            },
+            finish: finish
+        ))
+    }
+}
+
+/// Types a whole number, such as the reps of a set. Nil if cancelled.
+@MainActor
+func askCount(title: String, initial: Int, min: Int, max: Int) async -> Int? {
+    await OverlayCenter.shared.dialog { finish in
+        AnyView(NumberDialog(
+            title: title,
+            unit: nil,
+            initial: "\(initial)",
+            hint: "0",
+            note: nil,
+            keyboard: .numberPad,
+            validate: { text in
+                guard let v = Int(text.trimmingCharacters(in: .whitespaces)) else {
+                    return .failure("Escribe un número entero.")
+                }
+                if v < min || v > max { return .failure("Tiene que estar entre \(min) y \(max).") }
+                return .success(v)
+            },
+            finish: finish
+        ))
+    }
+}
+
+/// Result of checking what was typed: the value, or why it is wrong.
+enum NumberCheck<T> {
+    case success(T)
+    case failure(String)
+}
+
+private struct NumberDialog<T>: View {
+    let title: String
+    let unit: String?
+    let initial: String
+    let hint: String
+    let note: String?
+    let keyboard: UIKeyboardType
+    let validate: (String) -> NumberCheck<T>
+    let finish: (T?) -> Void
+    @Environment(\.colors) private var c
+    @State private var text: String?
+    @State private var error: String?
+    @FocusState private var focused: Bool
+
+    private func save() {
+        switch validate(text ?? initial) {
+        case .success(let v): finish(v)
+        case .failure(let message): error = message
+        }
+    }
+
+    var body: some View {
+        let binding = Binding(get: { text ?? initial }, set: { text = $0; error = nil })
+        AppDialog(title: title) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 10) {
+                    TextField("", text: binding, prompt: Text(hint).foregroundStyle(c.ink3))
+                        .font(.number(32))
+                        .keyboardType(keyboard)
+                        .focused($focused)
+                        .onSubmit(save)
+                    if let unit { Text(unit).font(.text(17)).foregroundStyle(c.ink2) }
+                }
+                .modifier(FieldBox(focused: focused))
+                if let error {
+                    Text(error).font(.text(14)).foregroundStyle(c.ink)
+                } else if let note {
+                    Text(note).font(.text(14)).foregroundStyle(c.ink2)
+                }
+            }
+        } actions: {
+            TextAction(label: "Cancelar") { finish(nil) }
+            TextAction(label: "Guardar", colorKey: \.ink, weight: .semibold, action: save)
+        }
+        .onAppear {
+            // Straight to the keyboard, with the old value ready to replace.
+            focused = true
+            DispatchQueue.main.async {
+                UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
+            }
+        }
+    }
+}

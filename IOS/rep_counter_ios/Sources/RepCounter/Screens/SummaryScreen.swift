@@ -25,31 +25,67 @@ struct SummaryScreen: View {
         self.route = route
     }
 
-    private func edit(_ exerciseId: String, _ name: String) {
+    private func edit(_ exerciseId: String, _ name: String, sets: [SetRecord]? = nil) {
         Task {
             await editExerciseSets(
                 exerciseName: name,
-                sets: session.sets.filter { $0.exerciseId == exerciseId }
-            ) { corrected in
-                // The exercise's sets take their places in order; deleted
-                // ones leave their last places empty.
-                var remaining = corrected.makeIterator()
-                var updated = session
-                updated.sets = session.sets.compactMap { s in
-                    s.exerciseId == exerciseId ? remaining.next() : s
-                }
-                session = updated
-                if justFinished {
-                    repo.saveSession(updated)
-                } else if updated.sets.isEmpty {
-                    // The last set went: the workout goes with it.
-                    repo.deleteSession(updated.id)
-                    Router.shared.pop()
-                    showMessage("Se eliminó el entrenamiento.")
-                } else {
-                    repo.editSession(updated)
-                }
+                sets: sets ?? session.sets.filter { $0.exerciseId == exerciseId }
+            ) { corrected in apply(corrected, to: exerciseId) }
+        }
+    }
+
+    /// Puts the corrected sets of one exercise back in the session and saves.
+    /// They take the exercise's places in order; deleted ones leave their
+    /// last places empty and added ones go right after its last set (or at
+    /// the end, for an exercise the session did not have).
+    private func apply(_ corrected: [SetRecord], to exerciseId: String) {
+        let lastSlot = session.sets.lastIndex { $0.exerciseId == exerciseId }
+        var remaining = corrected.makeIterator()
+        var sets: [SetRecord] = []
+        for (i, s) in session.sets.enumerated() {
+            if s.exerciseId == exerciseId {
+                if let next = remaining.next() { sets.append(next) }
+            } else {
+                sets.append(s)
             }
+            if i == lastSlot { while let extra = remaining.next() { sets.append(extra) } }
+        }
+        while let extra = remaining.next() { sets.append(extra) }
+
+        var updated = session
+        updated.sets = sets
+        session = updated
+        if justFinished {
+            repo.saveSession(updated)
+        } else if updated.sets.isEmpty {
+            // The last set went: the workout goes with it.
+            repo.deleteSession(updated.id)
+            Router.shared.pop()
+            showMessage("Se eliminó el entrenamiento.")
+        } else {
+            repo.editSession(updated)
+        }
+    }
+
+    /// An exercise that was done but not recorded (the sensor was off, or
+    /// it was done without it). Starts with one set like the last time it
+    /// was done, and opens it to adjust.
+    private func addExercise() {
+        Router.shared.pickExercises(title: "Agregar ejercicio", single: true) { picked in
+            guard let exercise = picked.first else { return }
+            if session.sets.contains(where: { $0.exerciseId == exercise.id }) {
+                // Already in the session: add to it there instead.
+                edit(exercise.id, exercise.name)
+                return
+            }
+            let before = repo.historyFor(exercise.id).last { $0.0.id != session.id }?.1.last
+            let first = SetRecord(
+                exerciseId: exercise.id, setNumber: 1, reps: before?.reps ?? 10, targetReps: nil,
+                weightKg: before?.weightKg, meanVelocity: nil, rangeDegrees: nil,
+                completedAt: session.endedAt
+            )
+            apply([first], to: exercise.id)
+            edit(exercise.id, exercise.name, sets: [first])
         }
     }
 
@@ -135,23 +171,33 @@ struct SummaryScreen: View {
                     Spacer().frame(height: 32)
                     AppLabel("Ejercicios")
                     Spacer().frame(height: 4)
+                    Text(justFinished && session.sets.isEmpty
+                        ? "Eliminaste todas las series: al tocar Listo no se guarda el entrenamiento."
+                        : session.sets.contains { $0.trace != nil }
+                        ? "Toca un ejercicio para editarlo: ver el recorrido de cada serie, cambiar repeticiones y peso, agregar o eliminar series."
+                        : "Toca un ejercicio para editarlo: cambiar repeticiones y peso, agregar o eliminar series.")
+                        .font(.text(14))
+                        .foregroundStyle(c.ink2)
+                    Spacer().frame(height: 4)
                     ForEach(Array(exerciseIds.enumerated()), id: \.element) { i, id in
                         let name = repo.exercise(id)?.name ?? id
                         SummaryExerciseRow(
                             name: name,
                             sets: session.sets.filter { $0.exerciseId == id },
-                            last: i == exerciseIds.count - 1,
+                            last: false,
                             onTap: { edit(id, name) }
                         )
                     }
-                    Spacer().frame(height: 16)
-                    Text(justFinished && session.sets.isEmpty
-                        ? "Eliminaste todas las series: al tocar Listo no se guarda el entrenamiento."
-                        : session.sets.contains { $0.trace != nil }
-                        ? "Toca un ejercicio para ver el recorrido de cada serie, corregir repeticiones y peso, o eliminar series."
-                        : "Toca un ejercicio para corregir repeticiones y peso, o eliminar series.")
-                        .font(.text(14))
-                        .foregroundStyle(c.ink3)
+                    Pressable(action: addExercise, label: "Agregar un ejercicio que no quedó registrado") {
+                        HStack(spacing: 10) {
+                            AppIcon(.plus, size: 20, color: c.ink)
+                            Text("Agregar ejercicio")
+                                .font(.text(16, .semibold))
+                                .foregroundStyle(c.ink)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(height: 52)
+                    }
                     if !justFinished {
                         Spacer().frame(height: 32)
                         TextAction(label: "Eliminar entrenamiento", action: deleteWorkout)
@@ -220,7 +266,7 @@ private struct SummaryExerciseRow: View {
     var body: some View {
         let d = SetsDescription(sets)
         let title = Text(name).font(.text(17, .medium)).foregroundStyle(c.ink).lineLimit(1)
-        let row = Group {
+        let details = Group {
             if d.compact {
                 HStack(spacing: 12) {
                     title.frame(maxWidth: .infinity, alignment: .leading)
@@ -242,10 +288,15 @@ private struct SummaryExerciseRow: View {
                 .padding(.vertical, 10)
             }
         }
+        // The pencil says the row opens to edit, not just to look.
+        let row = HStack(spacing: 14) {
+            details.frame(maxWidth: .infinity)
+            AppIcon(.edit, size: 20, color: c.ink2)
+        }
         .frame(minHeight: 52)
         .bottomRule(c.line, visible: !last)
 
-        Pressable(action: onTap, label: "Ver y corregir \(name)") { row }
+        Pressable(action: onTap, label: "Editar \(name)") { row }
     }
 }
 
@@ -307,23 +358,51 @@ private struct SetsSheet: View {
     var body: some View {
         let sets = current ?? initial
         VStack(alignment: .leading, spacing: 0) {
+            AppLabel("Editar")
+            Spacer().frame(height: 2)
             Text(exerciseName).font(.text(22, .semibold)).foregroundStyle(c.ink)
             Spacer().frame(height: 4)
             Text(sets.contains { $0.trace != nil }
-                ? "El recorrido que grabó el sensor en cada serie. Corrige las repeticiones y el peso, o elimina las que sobran."
-                : "Corrige las repeticiones y el peso de cada serie, o elimina las que sobran.")
+                ? "El recorrido que grabó el sensor en cada serie. Toca un número para escribirlo, o usa − y +."
+                : "Toca un número para escribirlo, o usa − y +. Agrega las series que faltaron o elimina las que sobran.")
                 .font(.text(16))
                 .foregroundStyle(c.ink2)
             Spacer().frame(height: 12)
             // Short lists sit in the sheet as they are; long ones scroll.
             if sets.count > 3 || (sets.count > 1 && sets.contains { $0.trace != nil }) {
-                ScrollView { rows(sets) }.frame(height: 440)
+                ScrollView { rows(sets) }.frame(height: 400)
             } else {
                 rows(sets)
             }
-            Spacer().frame(height: 24)
+            Pressable(action: { add(to: sets) }, label: "Agregar una serie") {
+                HStack(spacing: 10) {
+                    AppIcon(.plus, size: 20, color: c.ink)
+                    Text("Agregar serie")
+                        .font(.text(16, .semibold))
+                        .foregroundStyle(c.ink)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(height: 52)
+            }
+            .disabled(sets.count >= Self.maxSets)
+            Spacer().frame(height: 12)
             PrimaryButton("Listo", action: done)
         }
+    }
+
+    /// The API takes up to 100 sets of one exercise in a run.
+    private static let maxSets = 100
+
+    /// A set that was done but not counted: like the last one, numbered
+    /// after it, without the sensor's readings.
+    private func add(to sets: [SetRecord]) {
+        guard let last = sets.last, sets.count < Self.maxSets else { return }
+        let added = SetRecord(
+            exerciseId: last.exerciseId, setNumber: min(100, last.setNumber + 1), reps: last.reps,
+            targetReps: last.targetReps, weightKg: last.weightKg, meanVelocity: nil, rangeDegrees: nil,
+            completedAt: last.completedAt.addingTimeInterval(1)
+        )
+        update(sets + [added])
     }
 
     private func update(_ updated: [SetRecord]) {

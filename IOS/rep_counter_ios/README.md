@@ -206,6 +206,14 @@ entrenamiento", al final del resumen, la borra también en los demás teléfonos
 (`DELETE /sessions/{id}` deja una lápida que llega por la sincronización).
 Eliminar la última serie elimina el entrenamiento.
 
+Cada ejercicio del resumen lleva un lápiz. En la hoja, el peso y las
+repeticiones se pueden escribir tocando el número (hasta dos decimales, coma o
+punto; vacío o 0 es peso corporal) además de usar − y +. "Agregar serie"
+copia la última, sin datos del sensor, y "Agregar ejercicio" suma uno que no
+quedó registrado, con una serie como la última vez que se hizo. Todo viaja en
+el mismo `PUT`, que reemplaza las series de la sesión; la fecha y el nombre no
+se pueden editar porque la API no los recibe.
+
 Necesita la API 1.4.0: con la anterior, las correcciones y los borrados no
 llegan al servidor.
 

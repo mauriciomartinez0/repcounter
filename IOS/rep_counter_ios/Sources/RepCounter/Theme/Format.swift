@@ -32,8 +32,8 @@ func formatSigned(_ value: Double, decimals: Int = 0) -> String {
     return value > 0 ? "+\(text)" : text
 }
 
-/// Weight with up to one decimal ("60", "52,5").
-func formatKg(_ kg: Double) -> String { formatNumber(kg, decimals: 1) }
+/// Weight with up to two decimals ("60", "52,5", "22,75").
+func formatKg(_ kg: Double) -> String { formatNumber(kg, decimals: 2) }
 
 /// Velocity always with two decimals ("0,46").
 func formatVelocity(_ v: Double) -> String {

@@ -5,7 +5,8 @@ struct SessionRow: View {
     @Environment(\.colors) private var c
 
     var body: some View {
-        Pressable(action: { Router.shared.push(.summary(session, justFinished: false)) }) {
+        Pressable(action: { Router.shared.push(.summary(session, justFinished: false)) },
+                  label: "\(session.title), \(formatDay(session.startedAt)). Abrir para ver y editar.") {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(session.title)
@@ -18,6 +19,7 @@ struct SessionRow: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 NumberWithUnit(value: formatNumber(session.volumeKg), unit: "kg", size: 28, unitSize: 13)
+                AppIcon(.forward, size: 20, color: c.ink3)
             }
             .frame(height: 72)
             .bottomRule(c.line)
@@ -48,6 +50,10 @@ struct HistoryTab: View {
                     VStack(alignment: .leading, spacing: 0) {
                         VStack(alignment: .leading, spacing: 0) {
                             AppLabel("Sesiones")
+                            Text("Toca una sesión para verla y editarla.")
+                                .font(.text(14))
+                                .foregroundStyle(c.ink2)
+                                .padding(.top, 4)
                             ForEach(sessions.prefix(Self.visibleSessions)) { SessionRow(session: $0) }
                             if sessions.count > Self.visibleSessions {
                                 LinkRow(label: "Ver todas las sesiones (\(sessions.count))") {
@@ -211,7 +217,8 @@ enum ProgressMetric: CaseIterable {
     func format(_ v: Double) -> String {
         switch self {
         case .velocity: formatVelocity(v)
-        case .weight, .oneRepMax: formatNumber(v, decimals: 1)
+        case .weight: formatKg(v)
+        case .oneRepMax: formatNumber(v, decimals: 1)
         default: formatNumber(v)
         }
     }
