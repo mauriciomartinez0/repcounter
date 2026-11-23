@@ -119,6 +119,9 @@ final class WorkoutController {
 
     /// Weight changes made during the workout, per routine item.
     private var weightOverrides: [Int: Double?] = [:]
+    /// Alternative picked for a routine item, by its index. Items not here
+    /// use their main exercise.
+    private var chosenExercises: [Int: String] = [:]
     private var freeWeight: Double?
 
     // Live tracking of the current set.
@@ -429,10 +432,12 @@ final class WorkoutController {
                               targetReps: current.reps, weightKg: weightKg)
         }
         if itemIndex + 1 < routine.items.count {
-            let nextItem = routine.items[itemIndex + 1]
-            guard let nextExercise = repository.exercise(nextItem.exerciseId) else { return nil }
+            let nextIndex = itemIndex + 1
+            let nextItem = routine.items[nextIndex]
+            guard let nextExercise = repository.exercise(chosenExercises[nextIndex] ?? nextItem.exerciseId)
+            else { return nil }
             return PlannedSet(exercise: nextExercise, setNumber: 1, totalSets: nextItem.sets,
-                              targetReps: nextItem.reps, weightKg: nextItem.weightKg)
+                              targetReps: nextItem.reps, weightKg: plannedWeight(nextIndex))
         }
         return nil
     }
@@ -458,6 +463,69 @@ final class WorkoutController {
             dev?.event("counting")
         } else {
             beginExercise()
+        }
+    }
+
+    // MARK: - Alternatives
+
+    /// Planned weight of a routine item, with any change made during the
+    /// workout.
+    private func plannedWeight(_ index: Int) -> Double? {
+        if let override = weightOverrides[index] { return override }
+        return routine!.items[index].weightKg
+    }
+
+    /// The routine item whose exercise can still be swapped for one of its
+    /// alternatives: the one calibrating, or the one coming after the rest.
+    /// Nil when that item has no alternatives.
+    var swappableItem: (index: Int, options: [Exercise], currentId: String)? {
+        guard let routine else { return nil }
+        let index: Int
+        let currentId: String
+        switch phase {
+        case .calibrating:
+            index = itemIndex
+            currentId = exercise.id
+        case .resting:
+            guard let next else { return nil }
+            index = next.setNumber == 1 ? itemIndex + 1 : itemIndex
+            currentId = next.exercise.id
+        default:
+            return nil
+        }
+        guard routine.items.indices.contains(index) else { return nil }
+        let options = routine.items[index].optionIds.compactMap(repository.exercise)
+        guard options.count > 1 else { return nil }
+        return (index, options, currentId)
+    }
+
+    /// Do `newExercise` instead for the routine item at `index`, with the
+    /// same sets and reps. The weight becomes the last one used with it (or
+    /// the planned one, when going back to the main exercise). Ignored when
+    /// that item is no longer the swappable one, say because the rest ended
+    /// while choosing.
+    func chooseAlternative(_ newExercise: Exercise, forItem index: Int) {
+        guard let routine, let target = swappableItem, target.index == index,
+              target.options.contains(where: { $0.id == newExercise.id }),
+              newExercise.id != target.currentId else { return }
+        let item = routine.items[index]
+        if newExercise.id == item.exerciseId {
+            chosenExercises[index] = nil
+            weightOverrides[index] = nil
+        } else {
+            chosenExercises[index] = newExercise.id
+            let kg = newExercise.equipment == .bodyweight
+                ? nil : repository.lastWeight(newExercise.id) ?? item.weightKg
+            weightOverrides[index] = .some(kg)
+        }
+        if phase == .calibrating {
+            exercise = newExercise
+            beginExercise()
+        } else if let planned = next {
+            // startNextSet recalibrates, since the exercise changes.
+            next = PlannedSet(exercise: newExercise, setNumber: planned.setNumber,
+                              totalSets: planned.totalSets, targetReps: planned.targetReps,
+                              weightKg: plannedWeight(index))
         }
     }
 

@@ -35,7 +35,8 @@ async def _load(conn: AsyncConnection, where: str, params: tuple) -> list[Routin
                COALESCE(
                  json_agg(json_build_object(
                    'exerciseId', i.exercise_id, 'sets', i.sets, 'reps', i.reps,
-                   'weightKg', i.weight_kg, 'restSeconds', i.rest_seconds)
+                   'weightKg', i.weight_kg, 'restSeconds', i.rest_seconds,
+                   'alternativeIds', i.alternative_ids)
                    ORDER BY i.position) FILTER (WHERE i.routine_id IS NOT NULL),
                  '[]') AS items
           FROM routines r
@@ -100,7 +101,9 @@ async def put_routine(
 ) -> RoutineWriteResult:
     if body.edited_at > datetime.now(UTC) + MAX_CLOCK_SKEW:
         raise ApiError(422, "clock_skew", "La hora del teléfono no es correcta.")
-    await check_exercises(conn, {i.exercise_id for i in body.items})
+    await check_exercises(
+        conn, {e for i in body.items for e in (i.exercise_id, *i.alternative_ids)}
+    )
 
     cur = await conn.execute(
         "SELECT user_id, edited_at, deleted_at FROM routines WHERE id = %s FOR UPDATE",
@@ -134,11 +137,13 @@ async def put_routine(
             await cur.executemany(
                 """
                 INSERT INTO routine_items
-                  (routine_id, position, exercise_id, sets, reps, weight_kg, rest_seconds)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                  (routine_id, position, exercise_id, sets, reps, weight_kg, rest_seconds,
+                   alternative_ids)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 [
-                    (routine_id, pos, i.exercise_id, i.sets, i.reps, i.weight_kg, i.rest_seconds)
+                    (routine_id, pos, i.exercise_id, i.sets, i.reps, i.weight_kg, i.rest_seconds,
+                     i.alternative_ids)
                     for pos, i in enumerate(body.items, start=1)
                 ],
             )

@@ -211,6 +211,24 @@ guarda posición de las rutinas): las que se editan mantienen su lugar y las
 nuevas, o las que llegan de otro teléfono, quedan al final. Al cerrar sesión
 se pierde junto con la copia local.
 
+## Alternativas en un ejercicio
+
+Cada ejercicio de una rutina puede tener hasta 10 alternativas ("Elevaciones
+laterales con mancuerna", "o en polea", "o en máquina"). En el editor se
+agregan con "Agregar alternativa" (el buscador permite elegir varias) y se
+quitan con su ✕; en el detalle de la rutina aparecen debajo del principal,
+cada una con una "o".
+
+Al entrenar, mientras se calibra y en el "Sigue" del descanso aparece
+"Cambiar por alternativa". Las series y repeticiones son las del ítem; el peso
+pasa a ser el último usado con esa alternativa (o el planeado, al volver al
+principal). Las series quedan con el ejercicio que de verdad se hizo.
+
+Viajan en `alternativeIds` de cada ítem y necesitan la API 1.5.0 (migración
+007): la anterior las ignora y la siguiente sincronización las borra del
+teléfono. La app Flutter todavía no las conoce y las pierde si edita la
+rutina.
+
 ## Historial editable
 
 Desde el historial, tocar un ejercicio abre la misma hoja que al terminar el

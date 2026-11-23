@@ -155,6 +155,16 @@ class RoutineItem(Model):
     reps: Annotated[int, Field(ge=1, le=100)]
     weight_kg: WeightKg | None = None
     rest_seconds: Annotated[int, Field(ge=0, le=900)]
+    # Ejercicios que pueden hacerse en lugar de `exercise_id`, con el mismo
+    # plan. Un teléfono con una versión anterior no lo manda y queda vacío.
+    alternative_ids: Annotated[list[ExerciseId], Field(max_length=10)] = []
+
+    @model_validator(mode="after")
+    def _alternatives_are_distinct(self) -> "RoutineItem":
+        # Sin repetidos ni el ejercicio principal, conservando el orden.
+        seen = {self.exercise_id}
+        self.alternative_ids = [a for a in self.alternative_ids if not (a in seen or seen.add(a))]
+        return self
 
 
 class RoutineIn(Model):

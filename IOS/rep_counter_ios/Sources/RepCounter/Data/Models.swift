@@ -215,6 +215,23 @@ struct RoutineItem: Hashable {
     var weightKg: Double?
     var restSeconds = 90
 
+    /// Exercises that can be done instead, with the same plan ("Elevaciones
+    /// laterales en polea" when the machine is taken). In order, without the
+    /// main one or repeats.
+    var alternativeIds: [String] = [] {
+        didSet { alternativeIds = Self.clean(alternativeIds, main: exerciseId) }
+    }
+
+    /// The main exercise first, then the alternatives.
+    var optionIds: [String] { [exerciseId] + alternativeIds }
+
+    static let maxAlternatives = 10
+
+    private static func clean(_ ids: [String], main: String) -> [String] {
+        var seen: Set<String> = [main]
+        return Array(ids.filter { seen.insert($0).inserted }.prefix(maxAlternatives))
+    }
+
     func toJSON() -> JSON {
         [
             "exerciseId": exerciseId,
@@ -222,15 +239,18 @@ struct RoutineItem: Hashable {
             "reps": reps,
             "weightKg": orNull(weightKg),
             "restSeconds": restSeconds,
+            "alternativeIds": alternativeIds,
         ]
     }
 
-    init(exerciseId: String, sets: Int = 3, reps: Int = 10, weightKg: Double? = nil, restSeconds: Int = 90) {
+    init(exerciseId: String, sets: Int = 3, reps: Int = 10, weightKg: Double? = nil, restSeconds: Int = 90,
+         alternativeIds: [String] = []) {
         self.exerciseId = exerciseId
         self.sets = sets
         self.reps = reps
         self.weightKg = weightKg
         self.restSeconds = restSeconds
+        self.alternativeIds = Self.clean(alternativeIds, main: exerciseId)
     }
 
     init(json j: JSON) throws {
@@ -239,6 +259,9 @@ struct RoutineItem: Hashable {
         reps = try require(jsonInt(j["reps"]), "reps")
         weightKg = jsonDouble(j["weightKg"])
         restSeconds = try require(jsonInt(j["restSeconds"]), "restSeconds")
+        // Absent in routines saved before alternatives existed.
+        alternativeIds = Self.clean((j["alternativeIds"] as? [Any])?.compactMap { $0 as? String } ?? [],
+                                    main: exerciseId)
     }
 }
 

@@ -132,6 +132,12 @@ private struct CalibrationView: View {
                 SensorBadge()
             }
             .frame(height: 48)
+            if workout.swappableItem != nil {
+                HStack {
+                    SwapAlternativeAction(workout: workout)
+                    Spacer(minLength: 0)
+                }
+            }
             FirmwareCheckBanner(workout: workout)
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
@@ -671,6 +677,9 @@ private struct RestView: View {
                     + (next.weightKg == nil ? "peso corporal" : "\(formatKg(next.weightKg!)) kg"))
                     .font(.text(16))
                     .foregroundStyle(c.ink2)
+                if workout.swappableItem != nil {
+                    SwapAlternativeAction(workout: workout)
+                }
                 Spacer().frame(height: 12)
                 HStack {
                     Text("Empieza sola al terminar el descanso.")
@@ -694,5 +703,74 @@ private struct RestView: View {
             text = text + Text(" / \(target)").font(.number(40)).foregroundColor(c.ink2)
         }
         return text.lineLimit(1).minimumScaleFactor(0.5)
+    }
+}
+
+// MARK: - Alternatives
+
+/// "Cambiar por alternativa": in a routine, do one of the item's
+/// alternatives instead (the machine is taken, say). Shown while calibrating
+/// and, for the coming exercise, during the rest.
+private struct SwapAlternativeAction: View {
+    let workout: WorkoutController
+
+    var body: some View {
+        TextAction(label: "Cambiar por alternativa", colorKey: \.ink, size: 14, underline: true) {
+            guard let target = workout.swappableItem else { return }
+            Task {
+                if let picked = await askAlternative(options: target.options, currentId: target.currentId) {
+                    workout.chooseAlternative(picked, forItem: target.index)
+                }
+            }
+        }
+    }
+}
+
+/// The main exercise of a routine item and its alternatives. Returns the one
+/// picked, or nil if dismissed.
+@MainActor
+private func askAlternative(options: [Exercise], currentId: String) async -> Exercise? {
+    await OverlayCenter.shared.sheet { finish in
+        AnyView(AlternativeSheet(options: options, currentId: currentId, finish: finish))
+    }
+}
+
+private struct AlternativeSheet: View {
+    let options: [Exercise]
+    let currentId: String
+    let finish: (Exercise?) -> Void
+    @Environment(\.colors) private var c
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("¿Qué vas a hacer?").font(.text(22, .semibold)).foregroundStyle(c.ink)
+            Spacer().frame(height: 4)
+            Text("Mismas series y repeticiones. El peso es el último que usaste con ese ejercicio.")
+                .font(.text(16))
+                .foregroundStyle(c.ink2)
+            Spacer().frame(height: 12)
+            ForEach(Array(options.enumerated()), id: \.element.id) { i, option in
+                let selected = option.id == currentId
+                Pressable(action: { finish(option) }, label: option.name) {
+                    HStack(spacing: 12) {
+                        AppIcon(option.equipment.icon, size: 22, color: c.ink2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(option.name)
+                                .font(.text(17, selected ? .semibold : .medium))
+                                .foregroundStyle(c.ink)
+                                .lineLimit(2)
+                            Text(i == 0 ? "Principal · \(option.equipment.label)" : option.equipment.label)
+                                .font(.text(14))
+                                .foregroundStyle(c.ink2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        if selected { AppIcon(.check, size: 22, color: c.mark) }
+                    }
+                    .frame(minHeight: 64)
+                    .bottomRule(c.line)
+                }
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
     }
 }

@@ -214,6 +214,7 @@ struct RoutineDetailScreen: View {
                         }
                         ForEach(Array(items.enumerated()), id: \.offset) { i, item in
                             ItemRow(index: i + 1, item: item, exercise: repo.exercise(item.exerciseId),
+                                    alternatives: item.alternativeIds.compactMap(repo.exercise),
                                     last: i == items.count - 1)
                         }
                     }
@@ -235,6 +236,7 @@ private struct ItemRow: View {
     let index: Int
     let item: RoutineItem
     let exercise: Exercise?
+    let alternatives: [Exercise]
     let last: Bool
     @Environment(\.colors) private var c
 
@@ -250,6 +252,9 @@ private struct ItemRow: View {
                         .font(.text(19, .medium))
                         .foregroundStyle(c.ink)
                         .lineLimit(1)
+                    ForEach(alternatives) { alternative in
+                        AlternativeLine(name: alternative.name)
+                    }
                     Text(routineItemLine(item))
                         .font(.text(15))
                         .foregroundStyle(c.ink2)
@@ -258,10 +263,26 @@ private struct ItemRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if let exercise { PlacementTag(placement: exercise.placement) }
             }
-            .frame(height: 84)
+            .padding(.vertical, 16)
+            .frame(minHeight: 84)
             .topRule(c.line)
             .bottomRule(c.line, visible: last)
         }
+    }
+}
+
+/// "o Elevaciones laterales en polea", under the main exercise of a
+/// routine item.
+private struct AlternativeLine: View {
+    let name: String
+    var size: CGFloat = 16
+    @Environment(\.colors) private var c
+
+    var body: some View {
+        (Text("o ").foregroundColor(c.ink3) + Text(name).foregroundColor(c.ink2))
+            .font(.text(size))
+            .lineLimit(1)
+            .accessibilityLabel("Alternativa: \(name)")
     }
 }
 
@@ -352,6 +373,27 @@ struct RoutineEditorScreen: View {
         }
     }
 
+    /// Exercises the user can do instead of the one at `key`, with the same
+    /// plan.
+    private func addAlternatives(to key: Int) {
+        guard let entry = entries.first(where: { $0.id == key }) else { return }
+        let room = RoutineItem.maxAlternatives - entry.item.alternativeIds.count
+        guard room > 0 else {
+            showMessage("Puedes poner hasta \(RoutineItem.maxAlternatives) alternativas.")
+            return
+        }
+        let mainName = repo.exercise(entry.item.exerciseId)?.name ?? "este ejercicio"
+        Router.shared.pickExercises(title: "Alternativas a \(mainName)") { picked in
+            let ids = picked.map(\.id).filter { $0 != entry.item.exerciseId }
+            guard !ids.isEmpty, let i = entries.firstIndex(where: { $0.id == key }) else { return }
+            let before = entries[i].item.alternativeIds
+            change { entries[i].item.alternativeIds = before + ids }
+            if before.count + ids.count > RoutineItem.maxAlternatives {
+                showMessage("Se agregaron las primeras \(RoutineItem.maxAlternatives) alternativas.")
+            }
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ModalHeader(title: routine == nil ? "Nueva rutina" : "Editar rutina", onCancel: leave,
@@ -379,7 +421,9 @@ struct RoutineEditorScreen: View {
                     EditorRow(
                         name: repo.exercise(entry.item.exerciseId)?.name ?? entry.item.exerciseId,
                         item: entry.item,
+                        alternativeNames: entry.item.alternativeIds.map { repo.exercise($0)?.name ?? $0 },
                         onChanged: { item in change { entry.item = item } },
+                        onAddAlternative: { addAlternatives(to: entry.id) },
                         onRemove: {
                             let id = entry.id
                             change { entries.removeAll { $0.id == id } }
@@ -431,7 +475,9 @@ struct RoutineEditorScreen: View {
 private struct EditorRow: View {
     let name: String
     let item: RoutineItem
+    let alternativeNames: [String]
     let onChanged: (RoutineItem) -> Void
+    let onAddAlternative: () -> Void
     let onRemove: () -> Void
     @Environment(\.colors) private var c
 
@@ -484,13 +530,49 @@ private struct EditorRow: View {
                         }
                     }
                 }
+                alternatives
             }
         }
         .padding(.leading, 12)
         .padding(.trailing, kGutter)
-        .frame(height: 116)
+        .padding(.vertical, 14)
         .background(c.bg)
         .bottomRule(c.line)
+    }
+}
+
+extension EditorRow {
+    /// Each alternative with a cross to remove it, and the button to add more.
+    private var alternatives: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(zip(item.alternativeIds, alternativeNames)), id: \.0) { id, altName in
+                HStack(spacing: 8) {
+                    AlternativeLine(name: altName, size: 15)
+                    Spacer(minLength: 0)
+                    Pressable(action: {
+                        var copy = item
+                        copy.alternativeIds.removeAll { $0 == id }
+                        onChanged(copy)
+                    }, label: "Quitar la alternativa \(altName)") {
+                        AppIcon(.close, size: 18, color: c.ink2)
+                            .frame(width: 44, height: 36)
+                    }
+                    .padding(.trailing, -12)
+                }
+                .frame(height: 36)
+            }
+            if item.alternativeIds.count < RoutineItem.maxAlternatives {
+                Pressable(action: onAddAlternative, label: "Agregar una alternativa a \(name)") {
+                    HStack(spacing: 6) {
+                        AppIcon(.plus, size: 16, color: c.ink2)
+                        Text(item.alternativeIds.isEmpty ? "Agregar alternativa" : "Otra alternativa")
+                            .font(.text(14, .semibold))
+                            .foregroundStyle(c.ink2)
+                    }
+                    .frame(minHeight: 36)
+                }
+            }
+        }
     }
 }
 

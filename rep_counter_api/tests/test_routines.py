@@ -17,7 +17,29 @@ def test_put_creates_and_replay_is_harmless(client, user):
     assert len(routines) == 1
     assert routines[0]["items"][0] == {
         "exerciseId": "bench-press", "sets": 4, "reps": 8, "weightKg": 60.0, "restSeconds": 120,
+        "alternativeIds": [],
     }
+
+
+def test_items_keep_their_alternatives(client, user):
+    rid = str(uuid.uuid4())
+    item = {"exerciseId": "bench-press", "sets": 4, "reps": 8, "weightKg": 60, "restSeconds": 120}
+    body = make_routine(items=[
+        # Repetidas y el propio ejercicio principal se descartan.
+        {**item, "alternativeIds": ["db-bench-press", "machine-chest-press", "db-bench-press", "bench-press"]},
+        item,
+    ])
+    r = client.put(f"/routines/{rid}", headers=user, json=body)
+    assert r.status_code == 200
+    items = client.get(f"/routines/{rid}", headers=user).json()["items"]
+    assert items[0]["alternativeIds"] == ["db-bench-press", "machine-chest-press"]
+    # Un teléfono con la versión anterior no manda el campo.
+    assert items[1]["alternativeIds"] == []
+
+    bad = make_routine(items=[{**item, "alternativeIds": ["no-existe"]}])
+    r = client.put(f"/routines/{rid}", headers=user, json=bad)
+    assert r.status_code == 422
+    assert r.json()["error"]["exerciseIds"] == ["no-existe"]
 
 
 def test_latest_edit_wins_between_phones(client, user):
