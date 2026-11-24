@@ -119,14 +119,16 @@ def analyze(c):
     proj = acc @ ref / np.linalg.norm(ref)
     disp = displacement(mag)
     pk = peaks(disp)
+    # Profile 3 (bar that starts at the top) counts the curve upside down.
+    count = stack_sim.count_from_top if c.get("firmwareProfile") == 3 else stack_sim.count
     out.update({
         "offline": len(pk),
         "period": dominant_period(band(mag)[0]),
         "amp_cm": float(np.median([p for _, p in pk])) if pk else None,
         "tilt_deg": float(np.degrees(np.max(np.arccos(np.clip(
             (acc @ ref) / (np.linalg.norm(acc, axis=1) * np.linalg.norm(ref) + 1e-9), -1, 1))))),
-        "sim_mag": {s: stack_sim.count(mag, s) for s in (0, 50, 100)},
-        "sim_proj": stack_sim.count(proj, 50),
+        "sim_mag": {s: count(mag, s) for s in (0, 50, 100)},
+        "sim_proj": count(proj, 50),
     })
     out["_mag"], out["_proj"], out["_disp"], out["_peaks"] = mag, proj, disp, pk
     return out

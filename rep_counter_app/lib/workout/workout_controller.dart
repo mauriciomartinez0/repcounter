@@ -127,7 +127,9 @@ class WorkoutController extends ChangeNotifier {
   int get reps => max(0, sensor.state.repCount);
 
   /// The sensor rides the weight stack (cable and selector machines).
-  bool get onStack => _exercise.firmwareProfile == kStackProfile;
+  /// The board counts by height (stack or bar) and sends the vertical speed.
+  bool get onStack =>
+      _exercise.firmwareProfile == kStackProfile || _exercise.firmwareProfile == kBarFromTopProfile;
 
   final Map<String, int> _gripLift = {};
 

@@ -28,6 +28,13 @@ def test_catalog_matches_the_app_seed(client):
     assert one_arm["firmwareProfile"] == 2
     assert one_arm["placement"] == "equipment"
     assert len(one_arm["tutorialSteps"]) == 5
+    # 008: las barras que suben y bajan sin girar cuentan por la altura; la
+    # que empieza arriba con la curva al revés.
+    assert exercises["bench-press"]["firmwareProfile"] == 3
+    assert exercises["squat"]["firmwareProfile"] == 3
+    assert exercises["deadlift"]["firmwareProfile"] == 2
+    assert exercises["overhead-press"]["firmwareProfile"] == 2
+    assert exercises["barbell-curl"]["firmwareProfile"] == 0   # la barra gira
 
 
 def test_catalog_etag_and_304(client):

@@ -24,8 +24,13 @@ const int kCmdResetCount = 0x02;
 const int kCmdRezero = 0x03;
 const int kCmdSetGripLift = 0x05;
 
-/// Firmware profile of the exercises with the sensor on the weight stack.
+/// Firmware profile of the exercises with the sensor on the weight stack, or
+/// on a bar that starts at the bottom (deadlift).
 const int kStackProfile = 2;
+
+/// The same counting by height, upside down: a bar that starts at the top
+/// (bench press, squat), so the rep counts when the bar is back up.
+const int kBarFromTopProfile = 3;
 
 /// Upper end of [SensorService.setGripLift]; the firmware caps it the same.
 const int kMaxGripLiftCm = 30;

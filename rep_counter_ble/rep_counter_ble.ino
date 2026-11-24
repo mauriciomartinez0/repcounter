@@ -36,6 +36,17 @@
  * confirms it. Checked against simulated sets with the measured noise and
  * bias (stack_sim.py); still needs confirming with real ones.
  *
+ * Bar that starts at the top (profile 3): bench press, squat, RDL. The bar
+ * moves straight up and down without turning, like a stack, so it counts the
+ * same way, on the height curve upside down. A stack starts at rest at the
+ * bottom and a rep (up, then down) ends when it comes back; a bench press
+ * starts with the arms locked out, so a rep is down, then up, and has to end
+ * at the top. Counted the right way up, each rep only closed when the next
+ * one started down and the last one never did: a set of 8 read 7. Flipping
+ * the sign of the vertical acceleration makes the press look like a stack to
+ * the counter, so the rep counts as soon as the bar is back up. Bars that
+ * start at the bottom (deadlift, overhead press, rows) use profile 2 as is.
+ *
  * The board also records the set (vertical acceleration, 120 s at most) and,
  * when the app closes the set (CMD_ANALYZE), analyses it as TRASPASO.md
  * describes and answers on the analysis characteristic. The app offers the
@@ -171,6 +182,9 @@ enum ProfileKind : uint8_t {
 struct ExerciseProfile {
   const char *name;
   ProfileKind kind;
+  // Stack kind only: the movement starts at the top and goes down first
+  // (bench press, squat), so the height curve is counted upside down.
+  bool fromTop;
 };
 
 // Both tilt profiles count the same way, by the period of the angle curve
@@ -179,9 +193,10 @@ struct ExerciseProfile {
 // the sensor on the arm, a lateral raise that stopped 15–25° short of the
 // calibration pose between reps counted 5 of 12.
 const ExerciseProfile EXERCISE_PROFILES[] = {
-  { "arm",          PROFILE_TILT },    // id 0: sensor on the arm, or a bar
-  { "body",         PROFILE_TILT },    // id 1: sensor on the waist or a backpack
-  { "weight stack", PROFILE_STACK },   // id 2: sensor on the stack
+  { "arm",          PROFILE_TILT,  false },   // id 0: sensor on the arm, or a bar that turns (curl)
+  { "body",         PROFILE_TILT,  false },   // id 1: sensor on the waist or a backpack
+  { "weight stack", PROFILE_STACK, false },   // id 2: sensor on the stack, or a bar that starts low
+  { "bar from top", PROFILE_STACK, true  },   // id 3: bar that starts high (bench press, squat)
 };
 const uint8_t EXERCISE_COUNT = sizeof(EXERCISE_PROFILES) / sizeof(EXERCISE_PROFILES[0]);
 
@@ -214,7 +229,7 @@ uint32_t stillSinceMs = 0;
 uint32_t lastNotifyMs = 0;
 uint32_t ledOffAtMs = 0;
 
-// Weight stack (profile 2): live counter and recording of the set.
+// Vertical profiles (2 and 3): live counter and recording of the set.
 stack::StackCounter stackCounter;
 // Tilt profiles (0 and 1).
 stack::TiltCounter tiltCounter;
@@ -458,7 +473,7 @@ float angleFromReferenceDeg() {
 }
 
 /*
- * Profile 2. Follows the stack's vertical velocity, sample by sample, and
+ * Profiles 2 and 3. Follows the vertical velocity, sample by sample, and
  * records it for the end-of-set analysis. The published "angle" carries that
  * velocity in cm/s so the app can show it.
  */
@@ -473,6 +488,11 @@ void updateStack(float ax, float ay, float az, uint32_t nowMs) {
   // plate, the velocity drifted away and the count stayed at 0. Horizontal
   // movement only adds its square, and a stack hardly has any.
   float vertical = sqrtf(ax * ax + ay * ay + az * az) - refNorm;
+  // Profile 3: upside down, so down-then-up reads as up-then-down and the
+  // rep closes at the top. The recording gets the same sign, so the end-of-
+  // set analysis sees what the live counter saw.
+  const bool fromTop = EXERCISE_PROFILES[currentExercise].fromTop;
+  if (fromTop) vertical = -vertical;
 
   setRecorder.push(vertical);
   if (stackCounter.update(vertical, nowMs)) {
@@ -481,8 +501,11 @@ void updateStack(float ax, float ay, float az, uint32_t nowMs) {
     ledOffAtMs = nowMs + 120;
   }
 
-  inUpPhase = stackCounter.lifting();
-  currentAngleDeg = stackCounter.velocity * 100.0f;   // cm/s
+  // The app gets the real direction: positive is up either way. On a press
+  // the lifting half is the counter's way down.
+  float velocity = fromTop ? -stackCounter.velocity : stackCounter.velocity;
+  inUpPhase = fromTop ? velocity > 0.05f : stackCounter.lifting();
+  currentAngleDeg = velocity * 100.0f;   // cm/s
 }
 
 /* Tilt profiles: the waves of the angle from the calibration pose. */
@@ -603,7 +626,7 @@ void onConnect(uint16_t connectionHandle) {
 
 void publishState(uint32_t nowMs) {
   // 6 bytes, little endian: count, angle in tenths of a degree, exercise, phase.
-  // Profile 2 sends the stack's vertical velocity in tenths of cm/s instead
+  // Profiles 2 and 3 send the stack's vertical velocity in tenths of cm/s instead
   // of the angle (positive = up).
   uint8_t payload[6];
   int16_t angleTenths = (int16_t)(currentAngleDeg * 10.0f);

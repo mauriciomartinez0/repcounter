@@ -6,7 +6,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Empieza con los brazos extendidos. Esa es la posición de inicio que aprende el sensor.",
@@ -108,7 +108,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Coloca un banco inclinado a un ángulo de 45 grados.",
@@ -168,7 +168,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y la barra en el suelo frente a ti.",
@@ -189,7 +189,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y las rodillas ligeramente flexionadas.",
@@ -273,7 +273,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros, con los dedos de los pies ligeramente hacia afuera.",
@@ -339,7 +339,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y los dedos de los pies apuntando hacia delante.",
@@ -445,7 +445,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y sujeta la barra con agarre prono, manos un poco más juntas que el ancho de los hombros.",
@@ -674,7 +674,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Túmbate en un banco declinado con los pies sujetos y la cabeza más baja que las caderas.",
@@ -694,7 +694,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Túmbate sobre un banco con los pies apoyados en el suelo y la espalda presionada contra el banco.",
@@ -986,7 +986,7 @@
   "equipment": "machine",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ajusta la altura de la barra de la máquina Smith a la altura del pecho.",
@@ -1008,7 +1008,7 @@
   "equipment": "machine",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ajusta el banco a una inclinación de 30-45 grados.",
@@ -1256,7 +1256,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y las rodillas ligeramente flexionadas.",
@@ -1277,7 +1277,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y las rodillas ligeramente flexionadas.",
@@ -1557,7 +1557,7 @@
   "equipment": "machine",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Configura la máquina Smith con la barra a la altura de la cadera.",
@@ -1599,7 +1599,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y sujeta una barra frente a ti con un agarre pronado.",
@@ -1639,7 +1639,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Coloca una barra en un soporte a la altura de la rodilla.",
@@ -1702,7 +1702,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Empieza de pie con los pies separados a la altura de los hombros, con los dedos de los pies ligeramente hacia afuera.",
@@ -1723,7 +1723,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y los dedos de los pies ligeramente hacia afuera.",
@@ -1743,7 +1743,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y los dedos de los pies ligeramente hacia afuera.",
@@ -1786,7 +1786,7 @@
   "equipment": "machine",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Configura la máquina Smith con la barra a una altura adecuada para tu sentadilla.",
@@ -1850,7 +1850,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros, sujetando una barra sobre la parte superior de la espalda.",
@@ -1955,7 +1955,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Empieza de pie con los pies separados a la altura de los hombros y una barra apoyada sobre la parte superior de la espalda.",
@@ -1975,7 +1975,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Empieza de pie con los pies separados a la altura de los hombros y una barra apoyada sobre la parte superior de la espalda.",
@@ -2015,7 +2015,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie frente a un banco o escalón con una barra apoyada en la parte superior de la espalda.",
@@ -2057,7 +2057,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies más separados que el ancho de los hombros, con las puntas de los pies hacia afuera.",
@@ -2079,7 +2079,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y la barra hexagonal en el suelo frente a ti.",
@@ -2100,7 +2100,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y los dedos de los pies apuntando hacia delante.",
@@ -2182,7 +2182,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Empieza de pie con los pies separados a la altura de los hombros y la barra apoyada sobre la parte superior de la espalda.",
@@ -2202,7 +2202,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Empieza tumbado boca arriba en el suelo con las rodillas flexionadas y los pies planos sobre el suelo.",
@@ -2392,7 +2392,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Comienza con la barra en el suelo frente a ti, con los pies separados a la altura de los hombros.",
@@ -2458,7 +2458,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y coloca una barra sobre la parte superior de la espalda.",
@@ -2536,7 +2536,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Siéntate en un banco con la espalda recta y los pies planos sobre el suelo.",
@@ -2616,7 +2616,7 @@
   "equipment": "machine",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y las rodillas ligeramente flexionadas.",
@@ -2858,7 +2858,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 2,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Ponte de pie con los pies separados a la altura de los hombros y sujeta una barra con agarre prono, manos un poco más separadas que el ancho de los hombros.",
@@ -3258,7 +3258,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Túmbate sobre un banco con los pies apoyados en el suelo y la espalda presionada contra el banco.",
@@ -3279,7 +3279,7 @@
   "equipment": "barbell",
   "placement": "equipment",
   "placementNote": "Sobre la barra, en el centro.",
-  "firmwareProfile": 0,
+  "firmwareProfile": 3,
   "thresholdDegrees": 70,
   "tutorialSteps": [
    "Túmbate sobre un banco con los pies apoyados en el suelo y la espalda presionada contra el banco.",

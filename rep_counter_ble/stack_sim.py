@@ -363,6 +363,27 @@ CASES = {
     "golpe fuerte al asentar": (8, {"bump_g": 0.8}),
 }
 
+def bench_set(rng, n=8, h=0.35, down=1.3, up=1.0, bottom_pause=0.1, top_pause=0.4, racks=True):
+    """A bar that starts at the top (bench press, squat): down first, then up,
+    and back onto the hooks (4 cm lower) at the end. No bias left over."""
+    strokes = []
+    for _ in range(n):
+        strokes += [-smooth_move(h, down), np.full(int(bottom_pause * FS), -h),
+                    -h + smooth_move(h, up), np.zeros(int(top_pause * FS))]
+    if racks:
+        strokes += [-smooth_move(0.04, 0.5), np.full(int(FS), -0.04)]
+    pos = np.concatenate([np.zeros(int(1.5 * FS)), *strokes, np.full(int(2 * FS), strokes[-1][-1])])
+    acc = np.gradient(np.gradient(pos, DT), DT) / G
+    return 1.04 + acc + rng.normal(0, 0.00106, len(acc))
+
+
+def count_from_top(acc_g, sensitivity=DEFAULT_SENSITIVITY):
+    """Profile 3: the same counter on the vertical acceleration upside down,
+    so the rep (down, then up) closes at the top."""
+    ref = np.mean(acc_g[: int(FS)])
+    return count(2 * ref - acc_g, sensitivity)
+
+
 if __name__ == "__main__":
     rng = np.random.default_rng(7)
     for residual in (0.0, 0.0005, -0.0005, 0.001, -0.001):
@@ -389,3 +410,11 @@ if __name__ == "__main__":
             r = [count(gripped_set(rng, grip=grip_cm / 100, **kw)) for _ in range(10)]
             mark = "" if min(r) == max(r) == n else "   ✗"
             print(f"  {name}: {n} → {min(r)}–{max(r)}{mark}")
+    # Bar that starts at the top. Counted as a stack, each rep closes when the
+    # next one starts down, and the last one never does.
+    print("barra que empieza arriba (press banca, sentadilla)")
+    for n in (3, 5, 8, 12):
+        r2 = [count(bench_set(rng, n=n)) for _ in range(10)]
+        r3 = [count_from_top(bench_set(rng, n=n)) for _ in range(10)]
+        mark = "" if min(r3) == max(r3) == n else "   ✗"
+        print(f"  {n} reps: perfil 2 → {min(r2)}–{max(r2)}, perfil 3 → {min(r3)}–{max(r3)}{mark}")
