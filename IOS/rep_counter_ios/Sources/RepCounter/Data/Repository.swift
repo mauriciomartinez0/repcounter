@@ -58,7 +58,14 @@ final class GymRepository {
     @ObservationIgnored var retryEvery: Duration = .seconds(30)
 
     private var userId: String?
+    /// The catalog with the load chosen on this phone applied (see
+    /// `setLoad`). Everything reads this one.
     private(set) var exercises: [Exercise] = seedExercises
+    /// The catalog as the server sends it.
+    @ObservationIgnored private var catalog: [Exercise] = seedExercises
+    /// Stack or plates per exercise id, where the gym differs from the
+    /// catalog. Kept on the phone: it is about the gym, not the account.
+    @ObservationIgnored private var loads: [String: MachineLoad] = GymRepository.readLoads()
     @ObservationIgnored private var catalogEtag: String?
     private(set) var routines: [Routine] = []
     /// Newest first.
@@ -83,6 +90,7 @@ final class GymRepository {
     init(api: ApiClient, store: FileLocalStore) {
         self.api = api
         self.store = store
+        setCatalog(seedExercises)
     }
 
     // MARK: - Local copy
@@ -110,7 +118,7 @@ final class GymRepository {
             let parsed = list.compactMap { ($0 as? JSON).flatMap { try? Exercise(json: $0) } }
             if !parsed.isEmpty {
                 catalogEtag = jsonString(catalog["etag"])
-                exercises = parsed
+                setCatalog(parsed)
             }
         }
     }
@@ -172,6 +180,29 @@ final class GymRepository {
     // MARK: - Derived data
 
     func exercise(_ id: String) -> Exercise? { exercises.first { $0.id == id } }
+
+    // MARK: - Machine load
+
+    private static let kLoads = "settings.machineLoad"
+
+    private static func readLoads() -> [String: MachineLoad] {
+        let raw = UserDefaults.standard.dictionary(forKey: kLoads) as? [String: String] ?? [:]
+        return raw.compactMapValues(MachineLoad.init(rawValue:))
+    }
+
+    private func setCatalog(_ list: [Exercise]) {
+        catalog = list
+        exercises = list.map { e in loads[e.id].map(e.withLoad) ?? e }
+    }
+
+    /// Says how the machine of this exercise is loaded in the user's gym.
+    /// Choosing what the catalog already says clears the change.
+    func setLoad(_ load: MachineLoad, for exerciseId: String) {
+        guard let original = catalog.first(where: { $0.id == exerciseId }), original.canChooseLoad else { return }
+        loads[exerciseId] = load == original.load ? nil : load
+        UserDefaults.standard.set(loads.mapValues(\.rawValue), forKey: Self.kLoads)
+        setCatalog(catalog)
+    }
 
     func routine(_ id: String) -> Routine? { routines.first { $0.id == id } }
 
@@ -446,7 +477,7 @@ final class GymRepository {
         let list = try require(body["exercises"] as? [Any], "exercises")
         let parsed = try list.map { try Exercise(json: try require($0 as? JSON, "exercise")) }
         catalogEtag = jsonString(body["version"])
-        exercises = parsed
+        setCatalog(parsed)
         writeJSON(Self.catalogFile, ["etag": orNull(catalogEtag), "exercises": list])
     }
 

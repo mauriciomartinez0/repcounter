@@ -27,7 +27,7 @@ struct TraceChart: View {
         let hi = max(lo + minSpan, high + pad)
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                AppLabel(trace.kind == .height ? "Recorrido de la pila" : "Ángulo", color: c.ink2, size: 10)
+                AppLabel(trace.kind == .height ? "Recorrido" : "Ángulo", color: c.ink2, size: 10)
                 Spacer()
                 Text(format(hi)).font(.text(11)).foregroundStyle(c.ink2)
             }
@@ -54,7 +54,7 @@ struct TraceChart: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
-            "\(trace.kind == .height ? "Recorrido de la pila" : "Ángulo") durante "
+            "\(trace.kind == .height ? "Recorrido" : "Ángulo") durante "
                 + "\(Int(trace.seconds.rounded())) segundos, de \(format(lo)) a \(format(hi)).")
     }
 

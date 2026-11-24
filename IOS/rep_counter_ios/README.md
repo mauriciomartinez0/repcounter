@@ -166,6 +166,40 @@ conteo en vivo. El conteo nunca se corrige hacia abajo.
 - Con el sensor simulado, en los ejercicios de pila a veces "se escapa" una
   repetición en vivo, para poder ver la pantalla de revisión sin la placa.
 
+## Barras que suben y bajan sin girar
+
+En press banca, sentadilla o peso muerto la barra sube y baja recta: el
+ángulo casi no cambia y el perfil de inclinación no las puede contar (en
+simulación, 0 de 8). Cuentan como la pila, por la altura de la barra, con el
+sensor en cualquier orientación (migración `008_barbell_vertical.sql`):
+
+- **Perfil 2**, la barra empieza abajo y sube primero: peso muerto, press
+  militar, remos, encogimientos, hip thrust. Igual que una pila.
+- **Perfil 3**, la barra empieza arriba y baja primero: press banca (y sus
+  variantes), sentadillas, zancadas, peso muerto rumano. El firmware cuenta la
+  curva de altura al revés, así que la repetición se cierra al terminar de
+  subir. Contadas como pila, cada una se cerraba recién al empezar la
+  siguiente y la última nunca: una serie de 8 marcaba 7 (`stack_sim.py`).
+- Los curls, elevaciones frontales, pullover y press francés giran la barra
+  con los antebrazos y siguen con inclinación (perfil 0).
+- La placa manda la velocidad con su signo real en los dos perfiles, así que
+  la curva y la flecha de subida se ven igual. El análisis al cerrar la serie
+  también funciona en el perfil 3.
+- Con firmware que no conoce el perfil 3, el contador avisa que está
+  desactualizado, igual que con la pila.
+
+## Pila o discos
+
+Algunas máquinas vienen de pila en un gimnasio y de discos en otro. En el
+detalle del ejercicio (y en la calibración, para cambiarlo frente a la
+máquina) se elige `Pila de pesas` (perfil 2) o `Discos` (perfil 0, el sensor
+en el brazo de la máquina). Se guarda por ejercicio en el teléfono.
+
+## Peso en kg o lb
+
+Al escribir o ajustar el peso se puede cambiar entre kg y lb; se ve siempre el
+equivalente ("5 kg / 11 lb"). Se guarda y se sube en kg.
+
 ## Ejercicios de inclinación
 
 Con el sensor en el brazo, el cuerpo o una barra (perfiles 0 y 1), la placa

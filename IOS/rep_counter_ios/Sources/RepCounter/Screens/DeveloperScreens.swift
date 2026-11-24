@@ -195,7 +195,7 @@ private struct DevCaptureDetail: View {
     }
 
     var body: some View {
-        let stack = capture.firmwareProfile == kStackProfile
+        let stack = profileFollowsHeight(capture.firmwareProfile)
         VStack(alignment: .leading, spacing: 0) {
             Spacer().frame(height: 8)
             Text(capture.exerciseName)
@@ -246,7 +246,8 @@ private struct DevCaptureDetail: View {
             AppLabel("Datos")
             Spacer().frame(height: 4)
             detail("Duración", "\(String(format: "%.1f", capture.duration)) s")
-            detail("Perfil del firmware", "\(capture.firmwareProfile)" + (stack ? " (pila)" : ""))
+            detail("Perfil del firmware", "\(capture.firmwareProfile)" + (capture.firmwareProfile == kStackProfile ? " (altura)"
+                : capture.firmwareProfile == kBarFromTopProfile ? " (altura, desde arriba)" : ""))
             detail("Sensibilidad", "\(capture.sensitivity) %")
             detail("Objetivo", capture.targetReps.map(String.init) ?? "—")
             detail("Lecturas crudas", "\(capture.rawSamples)")

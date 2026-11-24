@@ -138,6 +138,19 @@ private struct CalibrationView: View {
                     Spacer(minLength: 0)
                 }
             }
+            if let load = workout.exercise.load {
+                // The gym's machine may not be loaded as the catalog says;
+                // the counting profile depends on it.
+                HStack(spacing: 8) {
+                    ForEach(MachineLoad.allCases, id: \.self) { option in
+                        FillChip(label: option.label, selected: option == load, fontSize: 14) {
+                            if option != load { tick(); workout.setLoad(option) }
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 8)
+            }
             FirmwareCheckBanner(workout: workout)
             VStack(spacing: 0) {
                 Spacer(minLength: 0)
@@ -190,9 +203,10 @@ private struct CounterView: View {
         let angle = min(90, max(0, sensor.state.angleDegrees))
         let threshold = Double(workout.exercise.thresholdDegrees)
         let hit = workout.targetReached
-        // Profile 2: the sensor rides a weight stack and the board sends its
-        // vertical speed (cm/s, positive up) where the angle usually goes.
-        let stack = workout.exercise.firmwareProfile == kStackProfile
+        // Profiles 2 and 3: the sensor rides a weight stack or a bar and the
+        // board sends its vertical speed (cm/s, positive up) where the angle
+        // usually goes.
+        let stack = workout.followsHeight
 
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -244,7 +258,7 @@ private struct CounterView: View {
                     .padding(.bottom, 16)
                 SensitivityControl(workout: workout)
                     .padding(.bottom, 20)
-                StackSpeed(cmPerSecond: sensor.state.angleDegrees)
+                StackSpeed(cmPerSecond: sensor.state.angleDegrees, exercise: workout.exercise)
             } else {
                 LiveTrace(workout: workout)
                     .padding(.bottom, 16)
@@ -309,8 +323,19 @@ private struct CounterView: View {
     }
 }
 
-/// Firmware profile that follows a weight stack (cable and selector machines).
+/// Firmware profile that follows the height of a weight stack (cable and
+/// selector machines), or of a bar that starts at the bottom (deadlift).
 let kStackProfile = 2
+/// The same, upside down, for a bar that starts at the top (bench press,
+/// squat): the rep counts when the bar is back up.
+let kBarFromTopProfile = 3
+
+/// Profiles where the board follows the vertical movement instead of the
+/// tilt: it sends the vertical speed where the angle usually goes, records
+/// the set and can go over it when it closes.
+func profileFollowsHeight(_ profile: Int) -> Bool {
+    profile == kStackProfile || profile == kBarFromTopProfile
+}
 
 /// The last seconds of the set as it happens: the height of the stack, or
 /// the angle. One wave per rep, so a short or missed rep shows right away.
@@ -318,14 +343,15 @@ private struct LiveTrace: View {
     let workout: WorkoutController
 
     var body: some View {
-        let empty = SetTrace(kind: workout.onStack ? .height : .angle, sampleHz: TraceRecorder.sampleHz, values: [])
+        let empty = SetTrace(kind: workout.followsHeight ? .height : .angle, sampleHz: TraceRecorder.sampleHz, values: [])
         TraceChart(trace: workout.liveTrace ?? empty, height: 64, liveSeconds: WorkoutController.liveTraceSeconds)
     }
 }
 
-/// Warns when the exercise counts on the weight stack but the board stays on
-/// another profile: firmware older than profile 2 ignores the request and
-/// keeps counting by tilt, which cannot count a stack. The board reports its
+/// Warns when the exercise counts by height (stack or bar) but the board
+/// stays on another profile: firmware older than profile 2 (or 3) ignores the
+/// request and keeps counting by tilt, which cannot count a stack or a bar
+/// that does not turn. The board reports its
 /// profile in every packet; a short grace period covers the command in flight.
 private struct FirmwareCheckBanner: View {
     let workout: WorkoutController
@@ -334,8 +360,8 @@ private struct FirmwareCheckBanner: View {
     @State private var confirmed = false
 
     private var mismatch: Bool {
-        sensor.connected && workout.exercise.firmwareProfile == kStackProfile
-            && sensor.state.exerciseId != kStackProfile
+        sensor.connected && workout.followsHeight
+            && sensor.state.exerciseId != workout.exercise.firmwareProfile
     }
 
     var body: some View {
@@ -343,7 +369,9 @@ private struct FirmwareCheckBanner: View {
             if confirmed {
                 VStack(alignment: .leading, spacing: 6) {
                     AppLabel("Firmware del sensor desactualizado", color: c.ink)
-                    Text("Este ejercicio cuenta sobre la pila de pesas y el sensor no conoce ese modo: "
+                    Text("Este ejercicio cuenta por la altura de la "
+                        + (workout.exercise.onWeightStack ? "pila de pesas" : "barra")
+                        + " y el sensor no conoce ese modo: "
                         + "sigue contando por inclinación, así que el conteo no es fiable. Carga el firmware "
                         + "nuevo en la placa y vuelve a empezar el ejercicio.")
                         .font(.text(15))
@@ -534,12 +562,21 @@ private struct SensitivitySlider: View {
     }
 }
 
-/// Live readout for the weight-stack profile: which way the stack is going and
-/// how fast. There is no angle or threshold to show; a rep is a full trip up
-/// and back down.
+/// Live readout for the height profiles: which way the stack or the bar is
+/// going and how fast. There is no angle or threshold to show; a rep is a
+/// full trip up and back down (down and back up, for a bar that starts high).
 private struct StackSpeed: View {
     let cmPerSecond: Double
+    let exercise: Exercise
     @Environment(\.colors) private var c
+
+    private var note: String {
+        if exercise.onWeightStack { return "Sensor sobre la pila de pesas: cuenta cada subida y bajada completa." }
+        if exercise.firmwareProfile == kBarFromTopProfile {
+            return "Sensor sobre la barra: cuenta cada bajada y subida; la repetición suma al terminar de subir."
+        }
+        return "Sensor sobre la barra: cuenta cada subida y bajada completa."
+    }
 
     var body: some View {
         // A few cm/s either way is noise, not movement.
@@ -549,14 +586,14 @@ private struct StackSpeed: View {
                 if direction != 0 {
                     AppIcon(direction > 0 ? .arrowUp : .arrowDown, size: 18, color: c.ink2, strokeWidth: 2)
                 }
-                Text(direction > 0 ? "SUBIENDO" : (direction < 0 ? "BAJANDO" : "PILA QUIETA"))
+                Text(direction > 0 ? "SUBIENDO" : (direction < 0 ? "BAJANDO" : (exercise.onWeightStack ? "PILA QUIETA" : "BARRA QUIETA")))
                     .font(.text(14, .semibold))
                     .tracking(14 * 0.08)
                     .foregroundStyle(c.ink2)
                 Spacer()
                 NumberWithUnit(value: formatVelocity(abs(cmPerSecond) / 100), unit: "m/s", size: 28, unitSize: 13)
             }
-            Text("Sensor sobre la pila de pesas: cuenta cada subida y bajada completa.")
+            Text(note)
                 .font(.text(13))
                 .foregroundStyle(c.ink3)
         }

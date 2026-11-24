@@ -290,7 +290,7 @@ final class WorkoutController {
             }
             maxAngle = max(maxAngle, state.angleDegrees)
             tracer.add(state.angleDegrees)
-            liveTrace = tracer.live(onStack: onStack, seconds: Self.liveTraceSeconds)
+            liveTrace = tracer.live(onStack: followsHeight, seconds: Self.liveTraceSeconds)
             if state.repCount > lastRepCount {
                 lastRepCount = state.repCount
                 dev?.event("rep", Double(state.repCount))
@@ -326,7 +326,9 @@ final class WorkoutController {
     }
 
     /// Weight stack: the board sends the stack's speed where the angle goes.
-    var onStack: Bool { exercise.firmwareProfile == kStackProfile }
+    /// The board counts by height (stack or bar), records the set and can
+    /// go over it when it closes.
+    var followsHeight: Bool { exercise.followsHeight }
 
     /// Close the current set and move to rest, or to the end of the workout.
     /// On the weight stack the board first analyses the set; if it finds reps
@@ -338,12 +340,12 @@ final class WorkoutController {
         analysisNote = nil
         devLive = live
         dev?.event("finish", Double(live))
-        guard onStack else {
+        guard followsHeight else {
             recordSet(reps: live)
             return
         }
         guard sensor.supportsSetAnalysis else {
-            analysisNote = .unsupported(knowsStack: sensor.state.exerciseId == kStackProfile)
+            analysisNote = .unsupported(knowsStack: sensor.state.exerciseId == exercise.firmwareProfile)
             recordSet(reps: live)
             return
         }
@@ -398,9 +400,9 @@ final class WorkoutController {
             weightKg: weightKg,
             meanVelocity: velocities.isEmpty ? nil : velocities.reduce(0, +) / Double(velocities.count),
             // On the stack the "angle" is a speed, not a range of motion.
-            rangeDegrees: !onStack && maxAngle > 0 ? maxAngle : nil,
+            rangeDegrees: !followsHeight && maxAngle > 0 ? maxAngle : nil,
             completedAt: Date(),
-            trace: tracer.trace(onStack: onStack)
+            trace: tracer.trace(onStack: followsHeight)
         ))
         if let dev { lastCaptureId = dev.finish(live: devLive, analysisFound: devFound, recorded: reps) }
         restItemIndex = itemIndex
@@ -527,6 +529,16 @@ final class WorkoutController {
                               totalSets: planned.totalSets, targetReps: planned.targetReps,
                               weightKg: plannedWeight(index))
         }
+    }
+
+    /// The machine in this gym is loaded the other way (stack or plates):
+    /// remember it and recalibrate with the matching counting profile. Only
+    /// while calibrating, before any rep of the exercise is counted.
+    func setLoad(_ load: MachineLoad) {
+        guard phase == .calibrating, exercise.load != nil, exercise.load != load else { return }
+        repository.setLoad(load, for: exercise.id)
+        exercise = exercise.withLoad(load)
+        beginExercise()
     }
 
     /// Free training: switch exercise during the rest.

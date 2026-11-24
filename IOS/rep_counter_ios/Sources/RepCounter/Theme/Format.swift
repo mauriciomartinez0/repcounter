@@ -74,3 +74,41 @@ func plural(_ n: Int, _ one: String, _ many: String) -> String { n == 1 ? one : 
 
 /// Whole minutes between two dates, truncated like Dart's Duration.inMinutes.
 func wholeMinutes(_ seconds: TimeInterval) -> Int { Int(seconds / 60) }
+
+// MARK: - Weight units
+
+/// The unit weights are typed and stepped in. Everything is stored and sent
+/// in kg; pounds are only how the number is shown while entering it.
+enum WeightUnit: String {
+    case kg, lb
+
+    /// UserDefaults key, read with @AppStorage so every stepper and dialog
+    /// switches together.
+    static let storageKey = "settings.weightUnit"
+
+    var other: WeightUnit { self == .kg ? .lb : .kg }
+
+    /// What one − / + press adds: 2,5 kg or 5 lb, the smallest usual plates.
+    var step: Double { self == .kg ? 2.5 : 5 }
+
+    /// kg → this unit.
+    func fromKg(_ kg: Double) -> Double { self == .kg ? kg : kg / kKgPerLb }
+
+    /// This unit → kg, rounded to two decimals as the API keeps it.
+    func toKg(_ value: Double) -> Double {
+        let kg = self == .kg ? value : value * kKgPerLb
+        return (kg * 100).rounded() / 100
+    }
+
+    /// The number alone in this unit: "22,75" kg, "45" or "50,5" lb.
+    func format(kg: Double) -> String {
+        self == .kg ? formatKg(kg) : formatNumber(fromKg(kg), decimals: 1)
+    }
+}
+
+let kKgPerLb = 0.45359237
+
+/// "5 kg / 11 lb", with the unit being typed first.
+func formatWeightBoth(_ kg: Double, first unit: WeightUnit) -> String {
+    "\(unit.format(kg: kg)) \(unit.rawValue) / \(unit.other.format(kg: kg)) \(unit.other.rawValue)"
+}

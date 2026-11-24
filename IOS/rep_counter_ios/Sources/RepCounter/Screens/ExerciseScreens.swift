@@ -235,8 +235,9 @@ struct ExerciseBrowser: View {
     }
 }
 
-/// Exercise detail, option A of the mockups: tutorial behind a button.
-/// "Empezar" opens a free workout with this exercise.
+/// Exercise detail in two tabs: "Preparar" (how the machine is loaded, where
+/// the sensor goes and the weight) and "Tutorial" (demo and steps).
+/// "Empezar" opens a free workout with this exercise from either tab.
 struct ExerciseDetailScreen: View {
     let exercise: Exercise
     @Environment(GymRepository.self) private var repo
@@ -244,71 +245,142 @@ struct ExerciseDetailScreen: View {
     @Environment(\.colors) private var c
     @State private var weight: Double?
     @State private var didSetup = false
+    @State private var tab = Tab.setup
+
+    enum Tab: CaseIterable {
+        case setup, tutorial
+
+        var label: String {
+            switch self {
+            case .setup: "Preparar"
+            case .tutorial: "Tutorial"
+            }
+        }
+    }
+
+    /// The exercise as the repository has it now, so a change of load
+    /// (stack or plates) shows up right away.
+    private var current: Exercise { repo.exercise(exercise.id) ?? exercise }
 
     var body: some View {
-        let favorite = repo.favoriteIds.contains(exercise.id)
-        let hasHistory = repo.lastWeight(exercise.id) != nil
+        let favorite = repo.favoriteIds.contains(current.id)
 
         VStack(spacing: 0) {
             BackHeader {
                 IconTapTarget(icon: favorite ? .star : .starOutline,
                               label: favorite ? "Quitar de favoritos" : "Agregar a favoritos") {
-                    repo.toggleFavorite(exercise.id)
+                    repo.toggleFavorite(current.id)
                 }
                 Spacer().frame(width: 8)
             }
+            VStack(alignment: .leading, spacing: 0) {
+                Spacer().frame(height: 8)
+                Text(current.name)
+                    .font(.text(36, .medium))
+                    .foregroundStyle(c.ink)
+                Spacer().frame(height: 6)
+                Text("\(current.muscleGroup.label) · \(current.equipment.label)")
+                    .font(.text(16))
+                    .foregroundStyle(c.ink2)
+                Spacer().frame(height: 20)
+                TabSwitch(tabs: Tab.allCases, selected: tab, label: \.label) { tab = $0 }
+            }
+            .padding(.horizontal, kGutter)
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    Spacer().frame(height: 8)
-                    Text(exercise.name)
-                        .font(.text(36, .medium))
-                        .foregroundStyle(c.ink)
-                    Spacer().frame(height: 6)
-                    Text("\(exercise.muscleGroup.label) · \(exercise.equipment.label)")
-                        .font(.text(16))
-                        .foregroundStyle(c.ink2)
-                    if ExerciseDemoView.available(exercise) {
-                        Spacer().frame(height: 24)
-                        ExerciseDemoView(exercise: exercise)
+                    switch tab {
+                    case .setup: setup
+                    case .tutorial: tutorial
                     }
-                    if !exercise.tutorialSteps.isEmpty {
-                        Spacer().frame(height: 32)
-                        AppLabel("Cómo hacerlo")
-                        Spacer().frame(height: 8)
-                        StepsList(steps: exercise.tutorialSteps)
-                    }
-                    Spacer().frame(height: 32)
-                    AppLabel("Dónde va el sensor")
-                    Spacer().frame(height: 12)
-                    SensorDiagram(exercise: exercise)
-                    Spacer().frame(height: 16)
-                    HStack(alignment: .top, spacing: 12) {
-                        AppIcon(exercise.placement.icon, size: 28)
-                        (Text("\(exercise.placement.label). ").font(.text(17, .semibold)).foregroundColor(c.ink)
-                            + Text(exercise.placementNote).font(.text(17)).foregroundColor(c.ink2))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    if exercise.firmwareProfile == kStackProfile {
-                        Spacer().frame(height: 16)
-                        StackSideMountNote()
-                    }
-                    Spacer().frame(height: 32)
-                    AppLabel(hasHistory ? "Peso · última vez" : "Peso")
-                    Spacer().frame(height: 12)
-                    WeightStepper(valueKg: weight) { weight = $0 }
-                    Spacer().frame(height: 24)
                 }
                 .padding(.horizontal, kGutter)
             }
+            // A fresh scroll position for each tab.
+            .id(tab)
             PrimaryButton("Empezar") {
-                startWorkout(WorkoutSpec(kind: .free(exercise, weightKg: weight)), sensor: sensor)
+                startWorkout(WorkoutSpec(kind: .free(current, weightKg: weight)), sensor: sensor)
             }
             .padding(EdgeInsets(top: 8, leading: kGutter, bottom: 32, trailing: kGutter))
         }
         .onAppear {
             guard !didSetup else { return }
             didSetup = true
-            weight = repo.lastWeight(exercise.id) ?? (exercise.equipment == .bodyweight ? nil : 20)
+            weight = repo.lastWeight(current.id) ?? (current.equipment == .bodyweight ? nil : 20)
+        }
+    }
+
+    @ViewBuilder private var setup: some View {
+        let hasHistory = repo.lastWeight(current.id) != nil
+        if let load = current.load {
+            Spacer().frame(height: 24)
+            AppLabel("Cómo se carga la máquina")
+            Spacer().frame(height: 12)
+            MachineLoadPicker(load: load) { repo.setLoad($0, for: current.id) }
+        }
+        Spacer().frame(height: current.load == nil ? 24 : 32)
+        AppLabel("Dónde va el sensor")
+        Spacer().frame(height: 12)
+        SensorDiagram(exercise: current)
+        Spacer().frame(height: 16)
+        HStack(alignment: .top, spacing: 12) {
+            AppIcon(current.placement.icon, size: 28)
+            (Text("\(current.placement.label). ").font(.text(17, .semibold)).foregroundColor(c.ink)
+                + Text(current.placementNote).font(.text(17)).foregroundColor(c.ink2))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        if current.onWeightStack {
+            Spacer().frame(height: 16)
+            StackSideMountNote()
+        }
+        Spacer().frame(height: 32)
+        AppLabel(hasHistory ? "Peso · última vez" : "Peso")
+        Spacer().frame(height: 12)
+        WeightStepper(valueKg: weight) { weight = $0 }
+        Spacer().frame(height: 24)
+    }
+
+    @ViewBuilder private var tutorial: some View {
+        let demo = ExerciseDemoView.available(current)
+        if demo {
+            Spacer().frame(height: 24)
+            ExerciseDemoView(exercise: current)
+        }
+        if !current.tutorialSteps.isEmpty {
+            Spacer().frame(height: demo ? 32 : 24)
+            AppLabel("Cómo hacerlo")
+            Spacer().frame(height: 8)
+            StepsList(steps: current.tutorialSteps)
+        }
+        if !demo && current.tutorialSteps.isEmpty {
+            Spacer().frame(height: 24)
+            Text("Este ejercicio todavía no tiene tutorial.")
+                .font(.text(17))
+                .foregroundStyle(c.ink2)
+        }
+        Spacer().frame(height: 24)
+    }
+}
+
+/// Stack or plates, for machines that come either way. Changes how the
+/// sensor counts, so it says so.
+struct MachineLoadPicker: View {
+    let load: MachineLoad
+    let onChanged: (MachineLoad) -> Void
+    @Environment(\.colors) private var c
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ForEach(MachineLoad.allCases, id: \.self) { option in
+                    FillChip(label: option.label, selected: option == load,
+                             action: { if option != load { tick(); onChanged(option) } })
+                }
+            }
+            Text("Elige la de tu gimnasio: con pila el sensor sigue la altura de las placas; "
+                 + "con discos, el giro del brazo de la máquina.")
+                .font(.text(14))
+                .foregroundStyle(c.ink2)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

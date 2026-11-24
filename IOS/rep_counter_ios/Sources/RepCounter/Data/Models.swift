@@ -138,8 +138,9 @@ struct Exercise: Hashable, Identifiable {
     /// "Sobre la barra, en el centro."
     let placementNote: String
 
-    /// Exercise id the board understands (CMD_SET_EXERCISE). The current
-    /// firmware knows 0 (sensor on the arm) and 1 (sensor on the body).
+    /// Exercise id the board understands (CMD_SET_EXERCISE): 0 sensor on the
+    /// arm (or a bar that turns), 1 on the body, 2 weight stack or a bar that
+    /// starts low, 3 a bar that starts high (bench press, squat).
     var firmwareProfile = 0
 
     /// Angle the movement has to pass for a rep to count.
@@ -203,6 +204,65 @@ struct Exercise: Hashable, Identifiable {
         tutorialSeconds = jsonInt(j["tutorialSeconds"]) ?? 0
         videoUrl = jsonString(j["videoUrl"])
         active = jsonBool(j["active"]) ?? true
+    }
+}
+
+/// How a machine or cable carries its weight. The catalog says the usual one,
+/// but gyms differ (a lat pulldown can be plate loaded, a leg press can have
+/// a stack), and it decides how the sensor counts: on a stack it follows the
+/// height of the plates (profile 2), on plates it follows the tilt of the
+/// lever arm (profile 0).
+enum MachineLoad: String, CaseIterable, Hashable {
+    case stack, plates
+
+    var label: String {
+        switch self {
+        case .stack: "Pila de pesas"
+        case .plates: "Discos"
+        }
+    }
+
+    var firmwareProfile: Int { self == .stack ? kStackProfile : 0 }
+
+    var placementNote: String {
+        switch self {
+        case .stack: "Encima de la pila de pesas, pegado a la placa superior."
+        case .plates: "En el brazo de la máquina, cerca del agarre."
+        }
+    }
+}
+
+extension Exercise {
+    /// The board counts by the height of a stack or a bar (profiles 2 and 3).
+    var followsHeight: Bool { profileFollowsHeight(firmwareProfile) }
+
+    /// The sensor rides a weight stack, not a bar: profile 2 on a machine or
+    /// cable other than a Smith.
+    var onWeightStack: Bool {
+        firmwareProfile == kStackProfile && equipment != .barbell && !id.hasPrefix("smith-")
+    }
+
+    /// Machines and cables where the sensor goes on the equipment. Smith
+    /// machines are a guided bar, so they keep the bar placement.
+    var canChooseLoad: Bool {
+        (equipment == .machine || equipment == .cable) && placement == .equipment && !id.hasPrefix("smith-")
+    }
+
+    /// Nil when the exercise has no stack or plates to choose from.
+    var load: MachineLoad? {
+        guard canChooseLoad else { return nil }
+        return firmwareProfile == kStackProfile ? .stack : .plates
+    }
+
+    /// The same exercise loaded the other way: counting profile and sensor
+    /// note follow the load.
+    func withLoad(_ load: MachineLoad) -> Exercise {
+        guard canChooseLoad, load != self.load else { return self }
+        return Exercise(id: id, name: name, muscleGroup: muscleGroup, equipment: equipment,
+                        placement: placement, placementNote: load.placementNote,
+                        firmwareProfile: load.firmwareProfile, thresholdDegrees: thresholdDegrees,
+                        tutorialSteps: tutorialSteps, tutorialSeconds: tutorialSeconds,
+                        videoUrl: videoUrl, active: active)
     }
 }
 

@@ -462,6 +462,44 @@ struct FillChip: View {
     }
 }
 
+/// Tabs across the full width, as text over a line: the chosen one in ink
+/// with a 2 px rule under it.
+struct TabSwitch<Tab: Hashable>: View {
+    let tabs: [Tab]
+    let selected: Tab
+    let label: (Tab) -> String
+    let onSelect: (Tab) -> Void
+    @Environment(\.colors) private var c
+
+    init(tabs: [Tab], selected: Tab, label: KeyPath<Tab, String>, onSelect: @escaping (Tab) -> Void) {
+        self.tabs = tabs
+        self.selected = selected
+        self.label = { $0[keyPath: label] }
+        self.onSelect = onSelect
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(tabs, id: \.self) { tab in
+                let on = tab == selected
+                Pressable(action: { if !on { tick(); onSelect(tab) } }, label: label(tab)) {
+                    Text(label(tab).uppercased())
+                        .font(.text(14, .semibold))
+                        .tracking(14 * 0.08)
+                        .foregroundStyle(on ? c.ink : c.ink3)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .overlay(alignment: .bottom) {
+                            if on { Rectangle().fill(c.ink).frame(height: 2) }
+                        }
+                }
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .overlay(alignment: .bottom) { Rectangle().fill(c.line).frame(height: 1) }
+    }
+}
+
 /// Horizontal row of chips that scrolls past the right edge, as in the
 /// designs, while starting aligned with the side margin.
 struct ChipRow<Content: View>: View {
@@ -535,16 +573,18 @@ struct NumberWithUnit: View {
     }
 }
 
-/// − value + control for weights.
+/// − value + control for weights. Shows the weight in the unit being used
+/// (kg or lb) and, under it, the same weight in the other one; tapping that
+/// line swaps the units. The value is always kg.
 struct WeightStepper: View {
     /// Nil means body weight; the buttons then add load.
     let valueKg: Double?
     var large = true
     /// Smaller still, to sit next to another stepper in a row.
     var compact = false
-    var step = 2.5
     let onChanged: (Double?) -> Void
     @Environment(\.colors) private var c
+    @AppStorage(WeightUnit.storageKey) private var unit: WeightUnit = .kg
 
     /// The API takes up to 500 kg.
     private static let maxKg = 500.0
@@ -553,29 +593,58 @@ struct WeightStepper: View {
         let box: CGFloat = large ? 72 : (compact ? 44 : 56)
         HStack(spacing: 0) {
             stepButton(.minus, "Bajar peso", box: box, action: valueKg.map { v in
-                { onChanged(v - step <= 0 ? nil : v - step) }
+                { onChanged(stepped(v, by: -unit.step)) }
             })
             if large { Spacer(minLength: 0) }
-            // Tapping the number types an exact weight (22,75 kg), which
-            // the 2,5 kg steps cannot reach.
-            Pressable(action: typeWeight, label: "Escribir el peso") {
-                Group {
-                    if let value = valueKg {
-                        NumberWithUnit(value: formatKg(value), unit: "kg", size: large ? 80 : (compact ? 28 : 40),
-                                       unitSize: large ? 20 : (compact ? 13 : 15))
-                    } else {
-                        Text("Corporal").font(.number(large ? 48 : (compact ? 22 : 30))).foregroundStyle(c.ink)
+            VStack(spacing: 0) {
+                // Tapping the number types an exact weight (22,75 kg), which
+                // the steps cannot reach.
+                Pressable(action: typeWeight, label: "Escribir el peso") {
+                    Group {
+                        if let value = valueKg {
+                            NumberWithUnit(value: unit.format(kg: value), unit: unit.rawValue,
+                                           size: large ? 80 : (compact ? 24 : 34),
+                                           unitSize: large ? 20 : (compact ? 13 : 15))
+                        } else {
+                            Text("Corporal").font(.number(large ? 48 : (compact ? 20 : 28))).foregroundStyle(c.ink)
+                        }
                     }
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                    .underline(color: c.control)
                 }
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-                .underline(color: c.control)
-                .frame(width: large ? nil : (compact ? 84 : 108), height: box)
+                // The same weight in the other unit; tap to type in that one.
+                Pressable(action: { tick(); unit = unit.other },
+                          label: "Cambiar a \(unit.other == .kg ? "kilos" : "libras")") {
+                    Text(valueKg.map { "\(unit.other.format(kg: $0)) \(unit.other.rawValue)" }
+                         ?? "en \(unit.rawValue) · \(unit.other.rawValue)")
+                        .font(.text(large ? 15 : (compact ? 11 : 12), .semibold))
+                        .foregroundStyle(c.ink2)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .padding(.horizontal, 6)
+                        .frame(minHeight: compact ? 14 : 18)
+                }
             }
+            .frame(width: large ? nil : (compact ? 84 : 108), height: large ? nil : box)
             if large { Spacer(minLength: 0) }
-            stepButton(.plus, "Subir peso", box: box,
-                       action: (valueKg ?? 0) + step <= Self.maxKg ? { onChanged((valueKg ?? 0) + step) } : nil)
+            stepButton(.plus, "Subir peso", box: box, action: plusAction)
         }
+    }
+
+    private var plusAction: (() -> Void)? {
+        let next = stepped(valueKg ?? 0, by: unit.step)
+        guard let next, next <= Self.maxKg else { return nil }
+        return { onChanged(next) }
+    }
+
+    /// One step in the unit on screen. Nil at or below zero (body weight).
+    private func stepped(_ kg: Double, by delta: Double) -> Double? {
+        // Round to what is shown first, so 20,41 kg reads as 45 lb and +5
+        // gives exactly 50 lb, not 49,99.
+        let shown = (unit.fromKg(kg) * 100).rounded() / 100
+        let next = (unit == .kg ? shown : (shown * 10).rounded() / 10) + delta
+        return next <= 0 ? nil : unit.toKg(next)
     }
 
     private func typeWeight() {

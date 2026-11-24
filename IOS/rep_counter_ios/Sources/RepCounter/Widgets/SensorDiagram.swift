@@ -9,7 +9,7 @@ struct SensorDiagram: View {
     @Environment(\.colors) private var c
 
     var body: some View {
-        if exercise.firmwareProfile == kStackProfile {
+        if exercise.onWeightStack {
             Canvas { ctx, size in drawStack(ctx, size) }
                 .aspectRatio(364 / 200, contentMode: .fit)
                 .accessibilityElement()

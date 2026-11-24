@@ -209,27 +209,104 @@ func parseDecimal(_ text: String) -> Double? {
     return v
 }
 
-/// Types an exact weight. Empty or 0 is body weight. Nil if cancelled.
+/// Types an exact weight, in kg or lb (a switch next to the field, which
+/// converts what is typed). Empty or 0 is body weight. Nil if cancelled.
 @MainActor
 func askWeight(initial: Double?, maxKg: Double) async -> WeightEntry? {
     await OverlayCenter.shared.dialog { finish in
-        AnyView(NumberDialog(
-            title: "Peso",
-            unit: "kg",
-            initial: initial.map(formatKg) ?? "",
-            hint: "Corporal",
-            note: "Déjalo vacío para peso corporal.",
-            keyboard: .decimalPad,
-            validate: { text in
-                if text.trimmingCharacters(in: .whitespaces).isEmpty { return .success(WeightEntry.bodyweight) }
-                guard let v = parseDecimal(text), v >= 0 else { return .failure("Escribe un número, por ejemplo 22,5.") }
-                if v == 0 { return .success(WeightEntry.bodyweight) }
-                if v > maxKg { return .failure("El máximo es \(formatKg(maxKg)) kg.") }
-                // Two decimals is finer than any plate.
-                return .success(WeightEntry.kg((v * 100).rounded() / 100))
-            },
-            finish: finish
-        ))
+        AnyView(WeightDialog(initialKg: initial, maxKg: maxKg, finish: finish))
+    }
+}
+
+private struct WeightDialog: View {
+    let initialKg: Double?
+    let maxKg: Double
+    let finish: (WeightEntry?) -> Void
+    @Environment(\.colors) private var c
+    @AppStorage(WeightUnit.storageKey) private var unit: WeightUnit = .kg
+    @State private var text: String?
+    @State private var error: String?
+    @FocusState private var focused: Bool
+
+    private var current: String { text ?? initialKg.map { unit.format(kg: $0) } ?? "" }
+
+    /// What is typed, in kg. Nil when empty, zero or not a number.
+    private var typedKg: Double? {
+        guard let v = parseDecimal(current), v > 0 else { return nil }
+        return unit.toKg(v)
+    }
+
+    private func save() {
+        if current.trimmingCharacters(in: .whitespaces).isEmpty { return finish(.bodyweight) }
+        guard let v = parseDecimal(current), v >= 0 else {
+            error = "Escribe un número, por ejemplo 22,5."
+            return
+        }
+        if v == 0 { return finish(.bodyweight) }
+        let kg = unit.toKg(v)
+        if kg > maxKg {
+            error = "El máximo es \(formatWeightBoth(maxKg, first: unit))."
+            return
+        }
+        finish(.kg(kg))
+    }
+
+    /// Swaps the unit and rewrites the typed number in it: 5 kg → 11 lb.
+    private func switchUnit(to new: WeightUnit) {
+        guard new != unit else { return }
+        tick()
+        if let kg = typedKg { text = new.format(kg: kg) }
+        error = nil
+        unit = new
+    }
+
+    var body: some View {
+        let binding = Binding(get: { current }, set: { text = $0; error = nil })
+        AppDialog(title: "Peso") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    TextField("", text: binding, prompt: Text("Corporal").foregroundStyle(c.ink3))
+                        .font(.number(32))
+                        .keyboardType(.decimalPad)
+                        .focused($focused)
+                        .onSubmit(save)
+                    unitChip(.kg)
+                    unitChip(.lb)
+                }
+                .modifier(FieldBox(focused: focused))
+                if let error {
+                    Text(error).font(.text(14)).foregroundStyle(c.ink)
+                } else if let kg = typedKg {
+                    // The same weight in the other unit, as it is typed.
+                    Text("= \(unit.other.format(kg: kg)) \(unit.other.rawValue)")
+                        .font(.text(14, .semibold)).foregroundStyle(c.ink2)
+                } else {
+                    Text("Déjalo vacío para peso corporal.").font(.text(14)).foregroundStyle(c.ink2)
+                }
+            }
+        } actions: {
+            TextAction(label: "Cancelar") { finish(nil) }
+            TextAction(label: "Guardar", colorKey: \.ink, weight: .semibold, action: save)
+        }
+        .onAppear {
+            // Straight to the keyboard, with the old value ready to replace.
+            focused = true
+            DispatchQueue.main.async {
+                UIApplication.shared.sendAction(#selector(UIResponder.selectAll(_:)), to: nil, from: nil, for: nil)
+            }
+        }
+    }
+
+    private func unitChip(_ u: WeightUnit) -> some View {
+        let selected = u == unit
+        return Pressable(action: { switchUnit(to: u) }, label: u == .kg ? "En kilos" : "En libras") {
+            Text(u.rawValue)
+                .font(.text(15, .semibold))
+                .foregroundStyle(selected ? c.bg : c.ink2)
+                .frame(width: 40, height: 32)
+                .background(selected ? c.ink : Color.clear, in: RoundedRectangle(cornerRadius: 4))
+        }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 

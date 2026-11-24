@@ -480,6 +480,7 @@ private struct EditorRow: View {
     let onAddAlternative: () -> Void
     let onRemove: () -> Void
     @Environment(\.colors) private var c
+    @AppStorage(WeightUnit.storageKey) private var weightUnit: WeightUnit = .kg
 
     var body: some View {
         HStack(spacing: 4) {
@@ -515,10 +516,10 @@ private struct EditorRow: View {
                             onChanged(copy)
                         }
                     }
-                    Cell(label: "Peso", value: item.weightKg == nil ? "Corp." : "\(formatKg(item.weightKg!)) kg") {
-                        if let result = await askWeight(item.weightKg) {
+                    Cell(label: "Peso", value: item.weightKg.map { "\(weightUnit.format(kg: $0)) \(weightUnit.rawValue)" } ?? "Corp.") {
+                        if let entry = await askWeight(initial: item.weightKg, maxKg: 500) {
                             var copy = item
-                            copy.weightKg = result.value
+                            copy.weightKg = entry.kg
                             onChanged(copy)
                         }
                     }
@@ -681,22 +682,6 @@ private func askInt(_ title: String, _ initial: Int, min: Int, max: Int) async -
                    error: "Entre \(min) y \(max).") { text in
         guard let v = Int(text), v >= min, v <= max else { return nil }
         return v
-    }
-}
-
-/// Wraps the result so "body weight" (nil) can be told apart from cancel.
-private struct WeightAnswer {
-    let value: Double?
-}
-
-@MainActor
-private func askWeight(_ initial: Double?) async -> WeightAnswer? {
-    await askValue(title: "Peso (kg)", initial: initial.map(formatKg) ?? "", hint: "0", keyboard: .decimalPad,
-                   error: "Escribe un peso entre 0 y 500.",
-                   footnote: "Déjalo vacío o en 0 para peso corporal.") { text in
-        if text.isEmpty { return WeightAnswer(value: nil) }
-        guard let v = Double(text.replacingOccurrences(of: ",", with: ".")), v >= 0, v <= 500 else { return nil }
-        return WeightAnswer(value: v == 0 ? nil : v)
     }
 }
 

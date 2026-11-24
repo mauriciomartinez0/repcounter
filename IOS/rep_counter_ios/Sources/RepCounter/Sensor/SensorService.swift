@@ -629,7 +629,7 @@ final class SimulatedSensorDriver: SensorDriver {
             up = true
             // On the weight stack, now and then a rep slips past the live
             // count, so the end-of-set review can be tried without the board.
-            if exerciseId == 2 && reps > 0 && Double.random(in: 0..<1) < 0.2 {
+            if profileFollowsHeight(exerciseId) && reps > 0 && Double.random(in: 0..<1) < 0.2 {
                 missed += 1
             } else {
                 reps += 1
@@ -638,7 +638,7 @@ final class SimulatedSensorDriver: SensorDriver {
         } else if up && angle < Self.threshold - 10 {
             up = false
         }
-        if exerciseId == kStackProfile {
+        if profileFollowsHeight(exerciseId) {
             // Like the board: the stack's vertical speed in cm/s, for a plate
             // that rises 30 cm per rep.
             publish(15 * 2 * .pi / Self.repSeconds * sin(2 * .pi * phase))
@@ -658,7 +658,7 @@ final class SimulatedSensorDriver: SensorDriver {
         while rawProduced >= 1 {
             rawProduced -= 1
             var x = 0.0, z = 1.0
-            if exerciseId == kStackProfile {
+            if profileFollowsHeight(exerciseId) {
                 z += 0.15 * w * w * cos(2 * .pi * phase) / 9.80665
             } else {
                 x = sin(angle * .pi / 180)
@@ -678,7 +678,7 @@ final class SimulatedSensorDriver: SensorDriver {
     var supportsSetAnalysis: Bool { true }
 
     func analyzeSet(token: UInt8) {
-        let analysis = exerciseId == 2
+        let analysis = profileFollowsHeight(exerciseId)
             ? SetAnalysis(status: .ok, found: reps + missed, live: reps)
             : SetAnalysis(status: .unavailable, found: 0, live: reps)
         Task { [weak self] in
