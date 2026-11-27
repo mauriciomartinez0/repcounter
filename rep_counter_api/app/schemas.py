@@ -269,6 +269,9 @@ class SessionEdit(Model):
     # equivocada). Van las dos o ninguna; sin ellas se conservan las de antes.
     started_at: AwareDatetime | None = None
     ended_at: AwareDatetime | None = None
+    # Nombre corregido ("Entrenamiento libre" → "Pierna en casa"). Sin él se
+    # conserva el de antes.
+    title: Name | None = None
 
     @model_validator(mode="after")
     def _times(self):

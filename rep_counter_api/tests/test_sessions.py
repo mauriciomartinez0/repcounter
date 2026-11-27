@@ -201,6 +201,23 @@ def test_edit_can_move_the_session_to_another_date(client, user):
         assert r.status_code == 422
 
 
+def test_edit_can_rename_the_session(client, user):
+    s = make_session()
+    client.post("/sessions", headers=user, json=s)
+    r = client.put(f"/sessions/{s['id']}", headers=user,
+                   json={"sets": s["sets"], "editedAt": now().isoformat(), "title": "  Pierna en casa "})
+    assert r.status_code == 200
+    assert r.json()["session"]["title"] == "Pierna en casa"
+
+    # Sin título se conserva el que tenía; vacío no vale.
+    r = client.put(f"/sessions/{s['id']}", headers=user,
+                   json={"sets": s["sets"], "editedAt": now().isoformat()})
+    assert r.json()["session"]["title"] == "Pierna en casa"
+    r = client.put(f"/sessions/{s['id']}", headers=user,
+                   json={"sets": s["sets"], "editedAt": now().isoformat(), "title": "  "})
+    assert r.status_code == 422
+
+
 def test_edit_needs_an_uploaded_session_of_the_same_user(client, user):
     s = make_session()
     r = client.put(f"/sessions/{s['id']}", headers=user,
