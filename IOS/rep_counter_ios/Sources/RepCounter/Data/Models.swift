@@ -469,8 +469,8 @@ struct WorkoutSession: Hashable, Identifiable {
     let id: String
     var routineId: String?
 
-    /// Routine name, or "Entrenamiento libre".
-    let title: String
+    /// Routine name, or "Entrenamiento libre". A free workout can be renamed.
+    var title: String
     /// Can be corrected from the summary (a session added by hand on the
     /// wrong day).
     var startedAt: Date
@@ -503,6 +503,30 @@ struct WorkoutSession: Hashable, Identifiable {
             moved.sets[i].completedAt = start.addingTimeInterval(min(offset, newLength))
         }
         return moved
+    }
+
+    /// Not done from a routine.
+    var isFree: Bool { routineId == nil }
+
+    /// The API takes up to 300 sets per session.
+    static let maxSets = 300
+
+    /// This session and `other` as one: from the first start to the last
+    /// end, every set in time order, and the name of the one that came first.
+    /// Set numbers restart on each run of an exercise, as during a workout.
+    func merged(with other: WorkoutSession) -> WorkoutSession {
+        let (first, second) = startedAt <= other.startedAt ? (self, other) : (other, self)
+        var result = first
+        result.startedAt = first.startedAt
+        result.endedAt = max(first.endedAt, second.endedAt)
+        result.plannedExercises = 0
+        var sets = (first.sets + second.sets).sorted { $0.completedAt < $1.completedAt }
+        for i in sets.indices {
+            let continues = i > 0 && sets[i - 1].exerciseId == sets[i].exerciseId
+            sets[i].setNumber = continues ? min(100, sets[i - 1].setNumber + 1) : 1
+        }
+        result.sets = sets
+        return result
     }
 
     /// Exercise ids in the order they were first done.

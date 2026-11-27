@@ -378,6 +378,28 @@ final class GymRepository {
         scheduleSync()
     }
 
+    /// Free workouts close in time to `session`, nearest first: the ones it
+    /// can be merged with.
+    func mergeCandidates(for session: WorkoutSession, limit: Int = 10) -> [WorkoutSession] {
+        let others = sessions.filter { $0.isFree && $0.id != session.id }
+        let sorted = others.sorted {
+            abs($0.startedAt.timeIntervalSince(session.startedAt))
+                < abs($1.startedAt.timeIntervalSince(session.startedAt))
+        }
+        return Array(sorted.prefix(limit))
+    }
+
+    /// Joins two free workouts into the one that started first; the other
+    /// is deleted, on every phone. Returns the joined session.
+    @discardableResult
+    func mergeSessions(_ a: WorkoutSession, _ b: WorkoutSession) -> WorkoutSession {
+        let merged = a.merged(with: b)
+        let gone = merged.id == a.id ? b : a
+        editSession(merged)
+        deleteSession(gone.id)
+        return sessions.first { $0.id == merged.id } ?? merged
+    }
+
     /// Deletes a session from Historial, on every phone.
     func deleteSession(_ sessionId: String) {
         guard userId != nil else { return }
@@ -612,6 +634,7 @@ final class GymRepository {
                     "editedAt": ISODate.string(local.editedAt ?? Date()),
                     "startedAt": ISODate.string(local.startedAt),
                     "endedAt": ISODate.string(local.endedAt),
+                    "title": local.title,
                 ] as JSON)
                 try check()
                 let result = response.body as? JSON ?? [:]

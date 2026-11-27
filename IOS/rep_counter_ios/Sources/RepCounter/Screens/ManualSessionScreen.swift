@@ -14,6 +14,9 @@ struct ManualSessionScreen: View {
     @State private var startedAt = Self.defaultStart
     @State private var minutes = 60
     @State private var sets: [SetRecord] = []
+    /// Name of a free workout; empty is "Entrenamiento libre".
+    @State private var name = ""
+    @FocusState private var nameFocused: Bool
 
     /// An hour ago, on the hour: most sessions are added right after.
     private static var defaultStart: Date {
@@ -106,6 +109,11 @@ struct ManualSessionScreen: View {
         }
     }
 
+    private var freeTitle: String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Entrenamiento libre" : String(trimmed.prefix(100))
+    }
+
     private func save() {
         // The API rejects sessions that start in the future.
         let start = min(startedAt, Date())
@@ -119,7 +127,7 @@ struct ManualSessionScreen: View {
                       completedAt: start.addingTimeInterval(step * Double(i + 1)))
         }
         let session = WorkoutSession(
-            id: newId(), routineId: routine?.id, title: routine?.name ?? "Entrenamiento libre",
+            id: newId(), routineId: routine?.id, title: routine?.name ?? freeTitle,
             startedAt: start, endedAt: end, sets: timed, plannedExercises: routine?.items.count ?? 0
         )
         repo.saveSession(session)
@@ -149,6 +157,12 @@ struct ManualSessionScreen: View {
                         ForEach(repo.routines) { r in
                             FillChip(label: r.name, selected: r.id == routineId) { choose(r.id) }
                         }
+                    }
+
+                    if routineId == nil {
+                        AppTextField(label: "Nombre", hint: "Entrenamiento libre", text: $name,
+                                     focus: $nameFocused, submitLabel: .done)
+                            .padding(.top, 20)
                     }
 
                     AppLabel("Cuándo").padding(.top, 28)

@@ -92,6 +92,46 @@ struct SummaryScreen: View {
         }
     }
 
+    /// Free workouts only: a routine's sessions keep the routine's name.
+    private func rename() {
+        Task {
+            guard let name = await askSessionName(initial: session.title) else { return }
+            guard name != session.title else { return }
+            var updated = session
+            updated.title = name
+            session = updated
+            if justFinished {
+                repo.saveSession(updated)
+            } else {
+                repo.editSession(updated)
+            }
+        }
+    }
+
+    /// Two free workouts that were really one (the app closed, or the
+    /// sensor was reconnected as a new workout).
+    private func merge() {
+        Task {
+            let candidates = repo.mergeCandidates(for: session)
+            guard let other = await pickSessionToMerge(candidates) else { return }
+            if session.sets.count + other.sets.count > WorkoutSession.maxSets {
+                showMessage("Juntos pasan de \(WorkoutSession.maxSets) series; no se pueden unir.")
+                return
+            }
+            let merged = session.merged(with: other)
+            let sure = await confirm(
+                title: "¿Unir los entrenamientos?",
+                message: "\"\(other.title)\" del \(formatDayLower(other.startedAt)) se suma a este: "
+                    + "queda uno solo, \"\(merged.title)\", de \(formatTime(merged.startedAt)) "
+                    + "a \(formatTime(merged.endedAt)), con \(merged.sets.count) series.",
+                confirmLabel: "Unir"
+            )
+            guard sure else { return }
+            session = repo.mergeSessions(session, other)
+            showMessage("Entrenamientos unidos.")
+        }
+    }
+
     private func deleteWorkout() {
         Task {
             let sure = await confirm(
@@ -137,9 +177,21 @@ struct SummaryScreen: View {
                         AppLabel("Sesión completada")
                         Spacer().frame(height: 4)
                     }
-                    Text(session.title)
-                        .font(.text(36, .medium))
-                        .foregroundStyle(c.ink)
+                    if session.isFree {
+                        Pressable(action: rename, label: "\(session.title). Cambiar el nombre") {
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text(session.title)
+                                    .font(.text(36, .medium))
+                                    .foregroundStyle(c.ink)
+                                    .multilineTextAlignment(.leading)
+                                AppIcon(.edit, size: 20, color: c.ink2)
+                            }
+                        }
+                    } else {
+                        Text(session.title)
+                            .font(.text(36, .medium))
+                            .foregroundStyle(c.ink)
+                    }
                     Spacer().frame(height: 6)
                     Pressable(action: editDate, label: "\(formatDay(session.startedAt)), "
                               + "\(formatTime(session.startedAt)). Cambiar la fecha") {
@@ -207,6 +259,19 @@ struct SummaryScreen: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .frame(height: 52)
+                    }
+                    if !justFinished && session.isFree && !repo.mergeCandidates(for: session, limit: 1).isEmpty {
+                        Pressable(action: merge, label: "Unir con otro entrenamiento libre") {
+                            HStack(spacing: 10) {
+                                AppIcon(.plus, size: 20, color: c.ink)
+                                Text("Unir con otro entrenamiento libre")
+                                    .font(.text(16, .semibold))
+                                    .foregroundStyle(c.ink)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(height: 52)
+                            .topRule(c.line)
+                        }
                     }
                     if !justFinished {
                         Spacer().frame(height: 32)
@@ -311,6 +376,106 @@ struct SummaryExerciseRow: View {
 }
 
 // MARK: - Corrections
+
+/// New name for a free workout. Nil if dismissed.
+@MainActor
+func askSessionName(initial: String) async -> String? {
+    await OverlayCenter.shared.sheet { finish in
+        AnyView(SessionNameSheet(initial: initial, finish: finish))
+    }
+}
+
+private struct SessionNameSheet: View {
+    let initial: String
+    let finish: (String?) -> Void
+    @Environment(\.colors) private var c
+    @State private var text: String?
+    @FocusState private var focused: Bool
+
+    /// The API takes names of 1 to 100 characters.
+    private static let maxLength = 100
+
+    var body: some View {
+        let binding = Binding(get: { text ?? initial },
+                              set: { text = String($0.prefix(Self.maxLength)) })
+        let name = binding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Nombre").font(.text(22, .semibold)).foregroundStyle(c.ink)
+            Spacer().frame(height: 4)
+            Text("Para reconocerlo en el historial: \"Pierna en casa\", \"Brazos y hombros\".")
+                .font(.text(16))
+                .foregroundStyle(c.ink2)
+            Spacer().frame(height: 16)
+            AppTextField(label: "Nombre del entrenamiento", hint: "Entrenamiento libre", text: binding,
+                         focus: $focused, submitLabel: .done,
+                         onSubmit: { if !name.isEmpty { finish(name) } })
+            Spacer().frame(height: 28)
+            PrimaryButton("Listo", action: name.isEmpty ? nil : { finish(name) })
+        }
+        .onAppear { focused = true }
+    }
+}
+
+/// The free workout to join with the open one, from `candidates`. Nil if
+/// dismissed.
+@MainActor
+func pickSessionToMerge(_ candidates: [WorkoutSession]) async -> WorkoutSession? {
+    await OverlayCenter.shared.sheet { finish in
+        AnyView(MergePickerSheet(candidates: candidates, finish: finish))
+    }
+}
+
+private struct MergePickerSheet: View {
+    let candidates: [WorkoutSession]
+    let finish: (WorkoutSession?) -> Void
+    @Environment(GymRepository.self) private var repo
+    @Environment(\.colors) private var c
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Unir con…").font(.text(22, .semibold)).foregroundStyle(c.ink)
+            Spacer().frame(height: 4)
+            Text("Entrenamientos libres, primero los más cercanos en el tiempo.")
+                .font(.text(16))
+                .foregroundStyle(c.ink2)
+            Spacer().frame(height: 12)
+            let list = VStack(spacing: 0) {
+                ForEach(candidates) { s in
+                    let names = s.exerciseIds.compactMap { repo.exercise($0)?.name }
+                    Pressable(action: { finish(s) }, label: "\(s.title), \(formatDay(s.startedAt))") {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(s.title)
+                                .font(.text(17, .medium))
+                                .foregroundStyle(c.ink)
+                                .lineLimit(1)
+                            Text("\(formatDay(s.startedAt)) · \(formatTime(s.startedAt)) · "
+                                + "\(s.sets.count) \(plural(s.sets.count, "serie", "series"))")
+                                .font(.text(14))
+                                .foregroundStyle(c.ink2)
+                            if !names.isEmpty {
+                                Text(names.joined(separator: ", "))
+                                    .font(.text(14))
+                                    .foregroundStyle(c.ink3)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 12)
+                        .bottomRule(c.line)
+                    }
+                }
+            }
+            if candidates.count > 4 {
+                ScrollView { list }.frame(height: 360)
+            } else {
+                list
+            }
+            Spacer().frame(height: 16)
+            TextAction(label: "Cancelar") { finish(nil) }
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
 
 /// When a session started and how long it lasted. Nil if dismissed.
 @MainActor
