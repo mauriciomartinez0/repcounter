@@ -106,3 +106,34 @@ struct LineChart: View {
         ctx.stroke(dot, with: .color(c.dotRing ?? c.dot), lineWidth: 1.5)
     }
 }
+
+/// Tiny chart for a list row: the line alone, evenly spaced, with the
+/// sensor dot on the latest value.
+struct Sparkline: View {
+    let values: [Double]
+    @Environment(\.colors) private var c
+
+    var body: some View {
+        Canvas { ctx, size in
+            guard let last = values.last else { return }
+            let inset: CGFloat = 4
+            let lo = values.min()!
+            let hi = values.max()!
+            let w = size.width - 2 * inset
+            let h = size.height - 2 * inset
+            func at(_ i: Int, _ v: Double) -> CGPoint {
+                let x = values.count == 1 ? size.width - inset : inset + w * CGFloat(i) / CGFloat(values.count - 1)
+                let y = hi == lo ? size.height / 2 : inset + CGFloat(1 - (v - lo) / (hi - lo)) * h
+                return CGPoint(x: x, y: y)
+            }
+            var path = Path()
+            for (i, v) in values.enumerated() {
+                if i == 0 { path.move(to: at(i, v)) } else { path.addLine(to: at(i, v)) }
+            }
+            ctx.stroke(path, with: .color(c.ink), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+            let end = at(values.count - 1, last)
+            ctx.fill(Path(ellipseIn: CGRect(x: end.x - 3, y: end.y - 3, width: 6, height: 6)), with: .color(c.dot))
+        }
+        .accessibilityHidden(true)
+    }
+}

@@ -57,6 +57,12 @@ func formatDay(_ d: Date) -> String {
 }
 
 /// "dom 27 sep".
+/// "18:05".
+func formatTime(_ d: Date) -> String {
+    let c = calendar.dateComponents([.hour, .minute], from: d)
+    return String(format: "%d:%02d", c.hour ?? 0, c.minute ?? 0)
+}
+
 func formatDayLower(_ d: Date) -> String { formatDay(d).lowercased() }
 
 /// "4 oct".

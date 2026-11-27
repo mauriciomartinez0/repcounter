@@ -180,13 +180,16 @@ struct RouteScreen: View {
         case .settings: SettingsScreen()
         case .routineDetail(let id): RoutineDetailScreen(routineId: id)
         case .routineEditor(let routine): RoutineEditorScreen(routine: routine, route: route)
+        case .routineLibrary: RoutineLibraryScreen()
+        case .libraryProgram(let id): LibraryProgramScreen(programId: id)
         case .exerciseDetail(let exercise): ExerciseDetailScreen(exercise: exercise)
         case .picker(let request): ExercisePickerScreen(request: request)
         case .workout(let spec): WorkoutFlowScreen(spec: spec, route: route)
         case .summary(let session, let justFinished):
             SummaryScreen(session: session, justFinished: justFinished, route: route)
-        case .allSessions: AllSessionsScreen()
+        case .manualSession: ManualSessionScreen()
         case .progress(let exercise): ProgressScreen(exercise: exercise)
+        case .routineProgress(let id): RoutineProgressScreen(routineId: id)
         case .devPanel: DevPanelScreen()
         case .devCapture(let id): DevCaptureScreen(captureId: id)
         }

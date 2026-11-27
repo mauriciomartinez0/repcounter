@@ -245,12 +245,12 @@ final class GymRepository {
         }
     }
 
-    /// Exercises that have at least one set with a velocity reading, most
-    /// recently done first.
-    func exercisesWithVelocity() -> [Exercise] {
+    /// Exercises that have at least one set with a weight, most recently
+    /// done first.
+    func exercisesWithWeight() -> [Exercise] {
         var ids: [String] = []
         for session in sessions {
-            for set in session.sets where set.meanVelocity != nil && !ids.contains(set.exerciseId) {
+            for set in session.sets where set.weightKg != nil && !ids.contains(set.exerciseId) {
                 ids.append(set.exerciseId)
             }
         }
@@ -264,6 +264,22 @@ final class GymRepository {
         for session in sessions.reversed() {
             let sets = session.sets.filter { $0.exerciseId == exerciseId }
             if !sets.isEmpty { result.append((session, sets)) }
+        }
+        return result
+    }
+
+    /// Every session done from routine `routineId`, oldest first.
+    func sessionsOf(routine routineId: String) -> [WorkoutSession] {
+        sessions.reversed().filter { $0.routineId == routineId }
+    }
+
+    /// Routines with at least one session, most recently trained first. A
+    /// deleted routine still shows, under the title of its last session.
+    func trainedRoutines() -> [(id: String, name: String)] {
+        var result: [(id: String, name: String)] = []
+        for session in sessions {
+            guard let id = session.routineId, !result.contains(where: { $0.id == id }) else { continue }
+            result.append((id, routine(id)?.name ?? session.title))
         }
         return result
     }
@@ -353,6 +369,8 @@ final class GymRepository {
         var edited = session
         edited.editedAt = Date()
         sessions[index] = edited
+        // The date may have changed.
+        sessions.sort { $0.startedAt > $1.startedAt }
         let id = session.id
         enqueue(Op("editSession", id), replaces: { $0.type == "editSession" && $0.id == id })
         saveSessions()
@@ -592,6 +610,8 @@ final class GymRepository {
                 let response = try await api.put("/sessions/\(op.id)", body: [
                     "sets": local.sets.map { $0.toJSON() },
                     "editedAt": ISODate.string(local.editedAt ?? Date()),
+                    "startedAt": ISODate.string(local.startedAt),
+                    "endedAt": ISODate.string(local.endedAt),
                 ] as JSON)
                 try check()
                 let result = response.body as? JSON ?? [:]

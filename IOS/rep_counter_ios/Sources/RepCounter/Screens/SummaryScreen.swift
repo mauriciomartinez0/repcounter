@@ -35,23 +35,8 @@ struct SummaryScreen: View {
     }
 
     /// Puts the corrected sets of one exercise back in the session and saves.
-    /// They take the exercise's places in order; deleted ones leave their
-    /// last places empty and added ones go right after its last set (or at
-    /// the end, for an exercise the session did not have).
     private func apply(_ corrected: [SetRecord], to exerciseId: String) {
-        let lastSlot = session.sets.lastIndex { $0.exerciseId == exerciseId }
-        var remaining = corrected.makeIterator()
-        var sets: [SetRecord] = []
-        for (i, s) in session.sets.enumerated() {
-            if s.exerciseId == exerciseId {
-                if let next = remaining.next() { sets.append(next) }
-            } else {
-                sets.append(s)
-            }
-            if i == lastSlot { while let extra = remaining.next() { sets.append(extra) } }
-        }
-        while let extra = remaining.next() { sets.append(extra) }
-
+        let sets = replacingSets(of: exerciseId, in: session.sets, with: corrected)
         var updated = session
         updated.sets = sets
         session = updated
@@ -86,6 +71,24 @@ struct SummaryScreen: View {
             )
             apply([first], to: exercise.id)
             edit(exercise.id, exercise.name, sets: [first])
+        }
+    }
+
+    /// The day and time it started and how long it lasted, for a session
+    /// entered on the wrong day or with the phone's clock off.
+    private func editDate() {
+        Task {
+            guard let (start, minutes) = await askSessionTime(start: session.startedAt,
+                                                              minutes: wholeMinutes(session.duration))
+            else { return }
+            let updated = session.rescheduled(start: min(start, Date()), minutes: minutes)
+            guard updated != session else { return }
+            session = updated
+            if justFinished {
+                repo.saveSession(updated)
+            } else {
+                repo.editSession(updated)
+            }
         }
     }
 
@@ -138,9 +141,16 @@ struct SummaryScreen: View {
                         .font(.text(36, .medium))
                         .foregroundStyle(c.ink)
                     Spacer().frame(height: 6)
-                    Text("\(formatDay(session.startedAt)) · \(countText)")
-                        .font(.text(16))
-                        .foregroundStyle(c.ink2)
+                    Pressable(action: editDate, label: "\(formatDay(session.startedAt)), "
+                              + "\(formatTime(session.startedAt)). Cambiar la fecha") {
+                        HStack(spacing: 8) {
+                            Text("\(formatDay(session.startedAt)) · \(formatTime(session.startedAt)) · \(countText)")
+                                .font(.text(16))
+                                .foregroundStyle(c.ink2)
+                            AppIcon(.edit, size: 16, color: c.ink2)
+                        }
+                        .frame(minHeight: 44, alignment: .leading)
+                    }
                     Spacer().frame(height: 28)
                     StatPair {
                         StatCell(
@@ -256,7 +266,7 @@ struct SetsDescription {
     }
 }
 
-private struct SummaryExerciseRow: View {
+struct SummaryExerciseRow: View {
     let name: String
     let sets: [SetRecord]
     let last: Bool
@@ -301,6 +311,88 @@ private struct SummaryExerciseRow: View {
 }
 
 // MARK: - Corrections
+
+/// When a session started and how long it lasted. Nil if dismissed.
+@MainActor
+func askSessionTime(start: Date, minutes: Int) async -> (Date, Int)? {
+    await OverlayCenter.shared.sheet { finish in
+        AnyView(SessionTimeSheet(initialStart: start, initialMinutes: minutes, finish: finish))
+    }
+}
+
+private struct SessionTimeSheet: View {
+    let initialStart: Date
+    let initialMinutes: Int
+    let finish: ((Date, Int)?) -> Void
+    @Environment(\.colors) private var c
+    @State private var start: Date?
+    @State private var minutes: Int?
+
+    var body: some View {
+        let currentStart = Binding(get: { start ?? initialStart }, set: { start = $0 })
+        let currentMinutes = minutes ?? initialMinutes
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Fecha y hora").font(.text(22, .semibold)).foregroundStyle(c.ink)
+            Spacer().frame(height: 4)
+            Text("Cuándo empezaste y cuánto duró.")
+                .font(.text(16))
+                .foregroundStyle(c.ink2)
+            Spacer().frame(height: 16)
+            SessionTimeFields(start: currentStart, minutes: currentMinutes) { minutes = $0 }
+            Spacer().frame(height: 28)
+            PrimaryButton("Listo") { finish((currentStart.wrappedValue, currentMinutes)) }
+        }
+    }
+}
+
+/// Start (not in the future) and length in minutes, as two ruled rows.
+struct SessionTimeFields: View {
+    @Binding var start: Date
+    let minutes: Int
+    let onMinutes: (Int) -> Void
+    @Environment(\.colors) private var c
+
+    var body: some View {
+        VStack(spacing: 0) {
+            DatePicker("Inicio", selection: $start, in: ...Date(),
+                       displayedComponents: [.date, .hourAndMinute])
+                .font(.text(17))
+                .foregroundStyle(c.ink)
+                .tint(c.ink)
+                .frame(minHeight: 52)
+                .bottomRule(c.line)
+            HStack {
+                Text("Duración (min)")
+                    .font(.text(17))
+                    .foregroundStyle(c.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                CountStepper(value: minutes, min: 1, max: 600, label: "minutos", compact: true, onChanged: onMinutes)
+            }
+            .frame(minHeight: 64)
+            .bottomRule(c.line)
+        }
+    }
+}
+
+/// `sets` with the sets of `exerciseId` swapped for `corrected`. They take
+/// the exercise's places in order; deleted ones leave their last places
+/// empty and added ones go right after its last set (or at the end, for an
+/// exercise the list did not have).
+func replacingSets(of exerciseId: String, in sets: [SetRecord], with corrected: [SetRecord]) -> [SetRecord] {
+    let lastSlot = sets.lastIndex { $0.exerciseId == exerciseId }
+    var remaining = corrected.makeIterator()
+    var result: [SetRecord] = []
+    for (i, s) in sets.enumerated() {
+        if s.exerciseId == exerciseId {
+            if let next = remaining.next() { result.append(next) }
+        } else {
+            result.append(s)
+        }
+        if i == lastSlot { while let extra = remaining.next() { result.append(extra) } }
+    }
+    while let extra = remaining.next() { result.append(extra) }
+    return result
+}
 
 /// Reps of one set. Returns the corrected count, or nil if dismissed.
 @MainActor

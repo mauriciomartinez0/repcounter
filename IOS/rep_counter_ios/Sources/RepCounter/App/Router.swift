@@ -31,12 +31,18 @@ enum Route: Hashable {
     case settings
     case routineDetail(String)
     case routineEditor(Routine?)
+    case routineLibrary
+    /// A program of the library, by id.
+    case libraryProgram(String)
     case exerciseDetail(Exercise)
     case picker(PickerRequest)
     case workout(WorkoutSpec)
     case summary(WorkoutSession, justFinished: Bool)
-    case allSessions
+    /// A session entered by hand, without the sensor.
+    case manualSession
     case progress(Exercise)
+    /// Progress of a routine's sessions, by routine id.
+    case routineProgress(String)
     case devPanel
     case devCapture(String)
 }
@@ -50,7 +56,8 @@ final class Router {
 
     var root: RootScreen = .loading
     var path: [Route] = []
-    /// Selected tab of the home screen: Rutinas · Ejercicios · Historial.
+    /// Selected tab of the home screen: Rutinas · Ejercicios · Historial ·
+    /// Progreso.
     var homeTab = 0
 
     /// Routes that cannot be left with the back swipe right now (a workout in

@@ -1,20 +1,21 @@
 import SwiftUI
 
-/// Rutinas · Ejercicios · Historial.
+/// Rutinas · Ejercicios · Historial · Progreso.
 struct HomeShell: View {
     @Bindable private var router = Router.shared
     @Environment(\.colors) private var c
 
-    private static let labels = ["Rutinas", "Ejercicios", "Historial"]
+    private static let labels = ["Rutinas", "Ejercicios", "Historial", "Progreso"]
 
     var body: some View {
         VStack(spacing: 0) {
-            // All three stay alive, like an IndexedStack, so each keeps its
+            // All four stay alive, like an IndexedStack, so each keeps its
             // scroll position and filters.
             ZStack {
                 RoutinesTab().opacity(router.homeTab == 0 ? 1 : 0).allowsHitTesting(router.homeTab == 0)
                 CatalogTab().opacity(router.homeTab == 1 ? 1 : 0).allowsHitTesting(router.homeTab == 1)
                 HistoryTab().opacity(router.homeTab == 2 ? 1 : 0).allowsHitTesting(router.homeTab == 2)
+                ProgressTab().opacity(router.homeTab == 3 ? 1 : 0).allowsHitTesting(router.homeTab == 3)
             }
             .frame(maxHeight: .infinity)
             HStack(spacing: 0) {
@@ -38,7 +39,7 @@ struct HomeShell: View {
     }
 }
 
-/// Header of the three tabs: title on the left, sensor and settings on the
+/// Header of the tabs: title on the left, sensor and settings on the
 /// right.
 struct TabHeader: View {
     let title: String

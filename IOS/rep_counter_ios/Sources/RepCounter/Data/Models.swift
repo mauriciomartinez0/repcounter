@@ -417,7 +417,8 @@ struct SetRecord: Hashable {
 
     /// Largest angle reached during the set.
     var rangeDegrees: Double?
-    let completedAt: Date
+    /// Moves with the session when its date is corrected.
+    var completedAt: Date
 
     /// Nil for sets recorded before the app kept it.
     var trace: SetTrace?
@@ -470,8 +471,10 @@ struct WorkoutSession: Hashable, Identifiable {
 
     /// Routine name, or "Entrenamiento libre".
     let title: String
-    let startedAt: Date
-    let endedAt: Date
+    /// Can be corrected from the summary (a session added by hand on the
+    /// wrong day).
+    var startedAt: Date
+    var endedAt: Date
     var sets: [SetRecord]
 
     /// How many exercises the routine had, for "5 de 5 ejercicios".
@@ -484,6 +487,23 @@ struct WorkoutSession: Hashable, Identifiable {
     var duration: TimeInterval { endedAt.timeIntervalSince(startedAt) }
 
     var volumeKg: Double { sets.reduce(0) { $0 + $1.volumeKg } }
+
+    /// The same session starting at `start` and lasting `minutes`. The sets
+    /// move with it, keeping their order and their distance from the start
+    /// (squeezed if the session got shorter).
+    func rescheduled(start: Date, minutes: Int) -> WorkoutSession {
+        var moved = self
+        let end = start.addingTimeInterval(Double(minutes) * 60)
+        moved.startedAt = start
+        moved.endedAt = end
+        let oldLength = max(1, duration)
+        let newLength = end.timeIntervalSince(start)
+        for i in moved.sets.indices {
+            let offset = min(max(0, sets[i].completedAt.timeIntervalSince(startedAt)), oldLength)
+            moved.sets[i].completedAt = start.addingTimeInterval(min(offset, newLength))
+        }
+        return moved
+    }
 
     /// Exercise ids in the order they were first done.
     var exerciseIds: [String] {

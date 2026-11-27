@@ -80,6 +80,19 @@ struct RoutinesTab: View {
                             Spacer(minLength: 0)
                         }
                         .frame(height: 72)
+                        .bottomRule(c.line)
+                    }
+                    Pressable(action: { Router.shared.push(.routineLibrary) },
+                              label: "Biblioteca de rutinas: programas para copiar") {
+                        HStack(spacing: 12) {
+                            AppIcon(.barbell, color: c.ink)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Biblioteca de rutinas").font(.text(18, .semibold)).foregroundStyle(c.ink)
+                                Text("Programas conocidos para copiar.").font(.text(14)).foregroundStyle(c.ink2)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .frame(height: 72)
                     }
                 }
                 .padding(.horizontal, kGutter)
@@ -204,6 +217,7 @@ struct RoutineDetailScreen: View {
                                 Router.shared.replaceTop(with: .routineDetail(copy.id))
                                 showMessage("Rutina duplicada.")
                             }
+                            SmallButton("Progreso") { Router.shared.push(.routineProgress(routine.id)) }
                         }
                         Spacer().frame(height: 12)
                         if items.isEmpty {
