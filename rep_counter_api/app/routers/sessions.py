@@ -294,10 +294,12 @@ async def get_session(session_id: UUID, user: CurrentUser, conn: Conn) -> Sessio
 async def edit_session(
     session_id: UUID, body: SessionEdit, user: CurrentUser, conn: Conn
 ) -> SessionWriteResult:
-    """Corrige una sesión ya subida: reemplaza todas sus series. Para dejarla
-    sin series, se borra con DELETE."""
+    """Corrige una sesión ya subida: reemplaza todas sus series y, si vienen,
+    la hora de inicio y de fin. Para dejarla sin series, se borra con DELETE."""
     if body.edited_at > datetime.now(UTC) + MAX_CLOCK_SKEW:
         raise ApiError(422, "clock_skew", "La hora del teléfono no es correcta.")
+    if body.started_at is not None and body.started_at > datetime.now(UTC) + MAX_CLOCK_SKEW:
+        raise ApiError(422, "clock_skew", "La sesión no puede empezar en el futuro.")
     await check_exercises(conn, {s.exercise_id for s in body.sets})
 
     cur = await conn.execute(
@@ -314,7 +316,14 @@ async def edit_session(
         return SessionWriteResult(session=await _load_one(conn, session_id), applied=False)
 
     await conn.execute(
-        "UPDATE workout_sessions SET edited_at = %s WHERE id = %s", (body.edited_at, session_id)
+        """
+        UPDATE workout_sessions
+           SET edited_at = %s,
+               started_at = COALESCE(%s, started_at),
+               ended_at = COALESCE(%s, ended_at)
+         WHERE id = %s
+        """,
+        (body.edited_at, body.started_at, body.ended_at, session_id),
     )
     await conn.execute("DELETE FROM set_records WHERE session_id = %s", (session_id,))
     await _insert_sets(conn, session_id, body.sets)

@@ -265,6 +265,18 @@ class SessionEdit(Model):
     # Cuándo se editó en el teléfono. Si el servidor ya tiene una edición
     # posterior, gana esa.
     edited_at: AwareDatetime
+    # Fecha y hora corregidas (una sesión agregada a mano con la fecha
+    # equivocada). Van las dos o ninguna; sin ellas se conservan las de antes.
+    started_at: AwareDatetime | None = None
+    ended_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def _times(self):
+        if (self.started_at is None) != (self.ended_at is None):
+            raise ValueError("startedAt y endedAt van juntos")
+        if self.started_at is not None and self.ended_at < self.started_at:
+            raise ValueError("endedAt no puede ser anterior a startedAt")
+        return self
 
 
 class SessionWriteResult(Model):

@@ -1,6 +1,6 @@
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import UTC, timedelta
 
 import psycopg
 
@@ -166,6 +166,39 @@ def test_edit_from_history_and_last_edit_wins(client, user):
     # Sin series no se edita: eso es borrar.
     empty = client.put(f"/sessions/{s['id']}", headers=user, json={"sets": [], "editedAt": now().isoformat()})
     assert empty.status_code == 422
+
+
+def test_edit_can_move_the_session_to_another_date(client, user):
+    s = make_session()
+    client.post("/sessions", headers=user, json=s)
+    start = now() - timedelta(days=3)
+    end = start + timedelta(minutes=50)
+    moved = [dict(x, completedAt=(start + timedelta(minutes=10 * (i + 1))).isoformat())
+             for i, x in enumerate(s["sets"])]
+    r = client.put(f"/sessions/{s['id']}", headers=user, json={
+        "sets": moved, "editedAt": now().isoformat(),
+        "startedAt": start.isoformat(), "endedAt": end.isoformat(),
+    })
+    assert r.status_code == 200
+    got = client.get(f"/sessions/{s['id']}", headers=user).json()
+    assert got["startedAt"][:16] == start.astimezone(UTC).isoformat()[:16]
+    assert got["endedAt"][:16] == end.astimezone(UTC).isoformat()[:16]
+
+    # Sin fechas se conservan las que tenía.
+    r = client.put(f"/sessions/{s['id']}", headers=user,
+                   json={"sets": moved, "editedAt": now().isoformat()})
+    assert r.json()["session"]["startedAt"] == got["startedAt"]
+
+    # Van las dos juntas, en orden y no en el futuro.
+    for bad in (
+        {"startedAt": start.isoformat()},
+        {"startedAt": end.isoformat(), "endedAt": start.isoformat()},
+        {"startedAt": (now() + timedelta(days=3)).isoformat(),
+         "endedAt": (now() + timedelta(days=3, hours=1)).isoformat()},
+    ):
+        r = client.put(f"/sessions/{s['id']}", headers=user,
+                       json={"sets": moved, "editedAt": now().isoformat(), **bad})
+        assert r.status_code == 422
 
 
 def test_edit_needs_an_uploaded_session_of_the_same_user(client, user):
